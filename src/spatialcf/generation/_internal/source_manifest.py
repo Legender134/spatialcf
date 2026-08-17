@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from spatialcf.data.artifacts import canonical_json_bytes
+from spatialcf.generation._internal.canonical_json import canonical_json_bytes
 from spatialcf.solver.certified_models import CertifiedSolverConfig
 
 _PORTABLE_COMPONENT = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")

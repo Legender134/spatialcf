@@ -24,12 +24,19 @@ PUBLIC_DOC_ROOT = (
     if (ROOT / "release" / "public-files.txt").is_file()
     else ROOT / "docs"
 )
-QUICKSTART = """python -m venv .venv
+QUICKSTART = """git clone --branch v0.1.1 --depth 1 https://github.com/Legender134/spatialcf.git
+cd spatialcf
+python -m venv .venv
 . .venv/bin/activate
-python -m pip install "spatialcf[ai2thor]"
+python -m pip install ".[ai2thor]"
 spatialcf generate --config configs/ai2thor-example.toml --output ./dataset
 spatialcf verify ./dataset
 spatialcf inspect ./dataset"""
+LOCAL_SETUP = '''git clone --branch v0.1.1 --depth 1 https://github.com/Legender134/spatialcf.git
+cd spatialcf
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install ".[ai2thor]"'''
 PUBLIC_DOCS = (
     ROOT / "README.md",
     ROOT / "README_EN.md",
@@ -39,6 +46,17 @@ PUBLIC_DOCS = (
     PUBLIC_DOC_ROOT / "adapters.md",
     PUBLIC_DOC_ROOT / "api.md",
 )
+PUBLIC_INSTALLATION_SURFACES = (
+    ROOT / "README.md",
+    ROOT / "README_EN.md",
+    PUBLIC_DOC_ROOT / "installation.md",
+    PUBLIC_DOC_ROOT / "quickstart.md",
+    PUBLIC_DOC_ROOT / "adapters.md",
+)
+SHELL_FENCE = re.compile(r"```(?:bash|sh|shell)\n(.*?)```", re.DOTALL)
+SHELL_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+PIP_EXECUTABLE = re.compile(r"pip(?:\d+(?:\.\d+)?)?$")
+PYTHON_EXECUTABLE = re.compile(r"python(?:\d+(?:\.\d+)?)?$")
 PUBLIC_TEXT_FILES = (
     *PUBLIC_DOCS,
     ROOT / "configs/ai2thor-example.toml",
@@ -62,13 +80,157 @@ FORBIDDEN_MARKERS = (
 )
 
 
-def test_readmes_and_quickstart_use_the_exact_public_commands() -> None:
+def _fenced_shell_blocks(path: Path) -> tuple[str, ...]:
+    return tuple(
+        block.strip() for block in SHELL_FENCE.findall(path.read_text(encoding="utf-8"))
+    )
+
+
+def _fenced_shell_commands(path: Path) -> tuple[tuple[str, ...], ...]:
+    return tuple(
+        tuple(shlex.split(line))
+        for block in _fenced_shell_blocks(path)
+        for line in block.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
+def _strip_environment_prefix(command: tuple[str, ...]) -> tuple[str, ...] | None:
+    index = 0
+    while index < len(command) and SHELL_ASSIGNMENT.fullmatch(command[index]):
+        index += 1
+    if index == len(command) or command[index] != "env":
+        return command[index:]
+
+    index += 1
+    while index < len(command):
+        token = command[index]
+        if token == "--":
+            index += 1
+            while index < len(command) and SHELL_ASSIGNMENT.fullmatch(command[index]):
+                index += 1
+            return command[index:]
+        if SHELL_ASSIGNMENT.fullmatch(token) or token in {"-i", "--ignore-environment"}:
+            index += 1
+            continue
+        if token in {"-u", "--unset"}:
+            if index + 1 == len(command):
+                return None
+            index += 2
+            continue
+        if token.startswith("-"):
+            return None
+        return command[index:]
+    return ()
+
+
+def _pip_install_operands(command: tuple[str, ...]) -> tuple[str, ...] | None:
+    invocation = _strip_environment_prefix(command)
+    if invocation is None:
+        return None
+    if not invocation:
+        return ()
+
+    executable = Path(invocation[0]).name
+    if PIP_EXECUTABLE.fullmatch(executable):
+        pip_arguments = invocation[1:]
+    elif PYTHON_EXECUTABLE.fullmatch(executable):
+        module_index = next(
+            (
+                index
+                for index in range(1, len(invocation) - 1)
+                if invocation[index : index + 2] == ("-m", "pip")
+            ),
+            None,
+        )
+        if module_index is None:
+            return ()
+        pip_arguments = invocation[module_index + 2 :]
+    else:
+        return ()
+
+    try:
+        install_index = pip_arguments.index("install")
+    except ValueError:
+        return ()
+    return tuple(
+        argument
+        for argument in pip_arguments[install_index + 1 :]
+        if not argument.startswith("-")
+    )
+
+
+def _is_index_only_ai2thor_install(command: tuple[str, ...]) -> bool:
+    operands = _pip_install_operands(command)
+    if operands is None:
+        return True
+    return any(operand.lower() == "spatialcf[ai2thor]" for operand in operands)
+
+
+def _assert_no_index_only_ai2thor_install(paths: tuple[Path, ...]) -> None:
+    for path in paths:
+        for command in _fenced_shell_commands(path):
+            assert not _is_index_only_ai2thor_install(command), (path, command)
+
+
+def test_public_installation_surfaces_begin_with_the_release_local_setup() -> None:
+    for path in PUBLIC_INSTALLATION_SURFACES:
+        assert any(
+            block.startswith(LOCAL_SETUP) for block in _fenced_shell_blocks(path)
+        ), path
+
+
+def test_quickstart_fences_continue_from_the_release_local_setup() -> None:
     for path in (
         ROOT / "README.md",
         ROOT / "README_EN.md",
         PUBLIC_DOC_ROOT / "quickstart.md",
     ):
-        assert QUICKSTART in path.read_text(encoding="utf-8"), path
+        assert any(
+            block.startswith(QUICKSTART) for block in _fenced_shell_blocks(path)
+        ), path
+
+
+def test_public_documentation_shell_fences_reject_index_only_ai2thor_installs() -> None:
+    _assert_no_index_only_ai2thor_install(PUBLIC_DOCS)
+
+
+@pytest.mark.parametrize(
+    "legacy_install",
+    (
+        'pip install "spatialcf[ai2thor]"',
+        'pip --disable-pip-version-check install -q "spatialcf[ai2thor]"',
+        'python -m pip install --no-cache-dir "spatialcf[ai2thor]"',
+        'pip3 install "spatialcf[ai2thor]"',
+        'python -I -m pip install "spatialcf[ai2thor]"',
+        'PIP_DISABLE_PIP_VERSION_CHECK=1 pip install "spatialcf[ai2thor]"',
+        'env PIP_DISABLE_PIP_VERSION_CHECK=1 pip install "spatialcf[ai2thor]"',
+        'env --unknown-option pip install "spatialcf[ai2thor]"',
+        'env -- PIP_DISABLE_PIP_VERSION_CHECK=1 pip install "spatialcf[ai2thor]"',
+        'env -u HOME -- PIP_DISABLE_PIP_VERSION_CHECK=1 pip install "spatialcf[ai2thor]"',
+    ),
+)
+def test_shell_install_validation_rejects_mutated_index_only_commands(
+    tmp_path: Path,
+    legacy_install: str,
+) -> None:
+    mutated_doc = tmp_path / "installation.md"
+    mutated_doc.write_text(
+        f"```bash\n{LOCAL_SETUP}\n{legacy_install}\n```\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_no_index_only_ai2thor_install((mutated_doc,))
+
+
+def test_shell_install_validation_accepts_the_required_local_setup(
+    tmp_path: Path,
+) -> None:
+    local_setup_doc = tmp_path / "installation.md"
+    local_setup_doc.write_text(f"```bash\n{LOCAL_SETUP}\n```\n", encoding="utf-8")
+
+    _assert_no_index_only_ai2thor_install((local_setup_doc,))
 
 
 def test_example_configuration_is_exact() -> None:

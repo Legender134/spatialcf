@@ -11,10 +11,16 @@ repeated native execution.
 
 ## Unity/AI2-THOR
 
-Unity/AI2-THOR is the first supported Adapter. Install it with:
+Unity/AI2-THOR is the first supported Adapter. `v0.1.1` is a GitHub release,
+not a PyPI publication, so install the Adapter from a local checkout of that
+release:
 
 ```bash
-python -m pip install "spatialcf[ai2thor]"
+git clone --branch v0.1.1 --depth 1 https://github.com/Legender134/spatialcf.git
+cd spatialcf
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install ".[ai2thor]"
 ```
 
 Select it in TOML with `adapter = "ai2thor"` and provide one or more exact scene

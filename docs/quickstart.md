@@ -1,11 +1,14 @@
 # Quick start
 
-From the repository root, run the complete workflow:
+`v0.1.1` is a GitHub release, not a PyPI publication. Clone it and run the
+complete workflow from the local checkout:
 
 ```bash
+git clone --branch v0.1.1 --depth 1 https://github.com/Legender134/spatialcf.git
+cd spatialcf
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install "spatialcf[ai2thor]"
+python -m pip install ".[ai2thor]"
 spatialcf generate --config configs/ai2thor-example.toml --output ./dataset
 spatialcf verify ./dataset
 spatialcf inspect ./dataset
