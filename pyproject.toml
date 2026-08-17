@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spatialcf"
+version = "0.1.0"
+description = "Minimal verified spatial counterfactual compiler"
+readme = "README_EN.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "numpy>=2.0,<3",
+  "pydantic>=2.8,<3",
+  "shapely>=2.0,<3",
+  "pillow>=10,<13",
+  "typer>=0.12,<1",
+  "rich>=13,<15",
+]
+
+[project.optional-dependencies]
+ai2thor = ["ai2thor>=5,<6"]
+test = ["pytest>=8,<10", "pytest-xdist>=3.6,<4", "hypothesis>=6,<7"]
+
+[project.scripts]
+spatialcf = "spatialcf.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spatialcf"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/.github/workflows/ci.yml",
+  "/LICENSE",
+  "/NOTICE",
+  "/README.md",
+  "/README_EN.md",
+  "/configs/**",
+  "/docs/*.md",
+  "/examples/*.py",
+  "/pyproject.toml",
+  "/src/spatialcf/**",
+  "/tests/public_smoke/**",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: requires an AI2-THOR Unity build",
+  "serial: must run outside the xdist worker pool",
+]

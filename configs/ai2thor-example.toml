@@ -1,0 +1,9 @@
+config_version = 1
+adapter = "ai2thor"
+scene_names = ["FloorPlan2"]
+split = "train"
+campaign_id = "ai2thor-quickstart"
+seed = 20260723
+width = 640
+height = 480
+max_requests = 12

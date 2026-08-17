@@ -1,0 +1,1 @@
+"""Canonical SpatialCF domain types."""
