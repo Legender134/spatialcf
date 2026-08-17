@@ -1,12 +1,15 @@
 # Installation
 
-SpatialCF supports Python 3.11. Create an isolated environment and install the
-package with the AI2-THOR Adapter:
+SpatialCF supports Python 3.11. `v0.1.1` is a GitHub release, not a PyPI
+publication. Clone that release tag, then create an isolated environment and
+install the local package with the AI2-THOR Adapter:
 
 ```bash
+git clone --branch v0.1.1 --depth 1 https://github.com/Legender134/spatialcf.git
+cd spatialcf
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install "spatialcf[ai2thor]"
+python -m pip install ".[ai2thor]"
 ```
 
 The base package contains the platform-neutral Schema, solver, generation

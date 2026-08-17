@@ -1,0 +1,39 @@
+.worktrees/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Local Python environments and secrets
+.venv/
+.venv-core/
+.venv-gpu/
+venv/
+.env
+.env.*
+!.env.example
+
+# Editors
+.idea/
+.vscode/
+
+# Generated datasets and experiment outputs
+artifacts/
+outputs/
+runs/
+logs/
+checkpoints/
+models/
+
+# Model weights and exported graphs
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
