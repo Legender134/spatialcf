@@ -5,11 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from spatialcf.adapters.ai2thor import AI2ThorAdapter
-from spatialcf.generation._internal.source_manifest import (
-    SourcePlanManifest,
-    load_source_plan_manifest,
-)
+from spatialcf.composition import DEFAULT_ENVIRONMENT_ADAPTER_FACTORY as AI2ThorAdapter
+from spatialcf.domain.source import SourcePlanManifest
+from spatialcf.generation._internal.source_manifest import load_source_plan_manifest
 from spatialcf.generation.capture.models import RosterCompilation, RosterSummary
 from spatialcf.generation.capture.plan import (
     CapturePlan,
@@ -29,10 +27,10 @@ from spatialcf.generation.capture.storage import (
     RetainedRosterVerification,
     load_roster,
     prepare_roster_verification,
-    publish_roster,
     revalidate_roster_verification,
     verify_roster,
 )
+from spatialcf.generation.workflows import capture as capture_workflow
 
 
 def load_source_manifest(path: Path) -> SourcePlanManifest:
@@ -48,12 +46,12 @@ def capture_and_publish_dataset(
     adapter_factory: Callable[..., AI2ThorAdapter] = AI2ThorAdapter,
     dataset_loader: Callable[[str, str], object] = load_prior_dataset,
 ) -> RosterSummary:
-    compilation = capture_dataset(
+    return capture_workflow.capture_and_publish_dataset(
         plan,
+        roster_root=roster_root,
         adapter_factory=adapter_factory,
         dataset_loader=dataset_loader,
     )
-    return publish_roster(compilation, roster_root)
 
 
 __all__ = (

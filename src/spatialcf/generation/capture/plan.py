@@ -11,21 +11,18 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from spatialcf.domain.v2.base import (
+from spatialcf.domain.base import (
+    CanonicalModel,
     NonNegativeFiniteFloat,
     PositiveFiniteFloat,
     Sha256Digest,
-    V2Model,
 )
-from spatialcf.domain.v2.serialization import (
-    canonical_json_bytes_v2,
-    canonical_sha256_v2,
+from spatialcf.domain.serialization import (
+    canonical_json_bytes,
+    canonical_sha256,
 )
-from spatialcf.generation._internal.evidence.camera import (
-    build_settled_camera_policy,
-)
-from spatialcf.generation._internal.source_manifest import (
-    LegacySource,
+from spatialcf.domain.source import (
+    LegacyAI2ThorSource,
     ProceduralSource,
     SolverConfig,
     SourcePlanEntry,
@@ -35,6 +32,7 @@ from spatialcf.generation.capture.models import (
     CompetitionNativeSourceRefV2_9,
     DatasetSplitV2_9,
     RosterPolicy,
+    build_settled_camera_policy,
 )
 from spatialcf.generation.errors import require_wire_version
 from spatialcf.verification.filesystem import (
@@ -52,7 +50,7 @@ from spatialcf.verification.filesystem import (
 
 _LOCATOR_DOMAIN = "spatialcf.competition-native-dataset-source-locator.v2.9"
 _SOURCE_MANIFEST_DOMAIN = "spatialcf.competition-native-source-manifest.v2.9"
-_PLAN_DOMAIN_V2_9_3 = "spatialcf.competition-native-dataset-capture-plan.v2.9.3"
+_CURRENT_PLAN_HASH_DOMAIN = "spatialcf.competition-native-dataset-capture-plan.v2.9.3"
 _MAX_SOURCES = 32
 _MAX_OBJECTS_PER_SCENE = 96
 _MAX_CANDIDATES = 40_000
@@ -62,7 +60,7 @@ _MAX_CHECKSUM_BYTES = 1024
 _CAPTURE_PLAN_VERIFICATION_CAPABILITY = object()
 
 
-class CompetitionNativeLegacyDatasetLocatorV2_9(V2Model):
+class CompetitionNativeLegacyDatasetLocatorV2_9(CanonicalModel):
     """One complete iTHOR source locator, independent of runtime results."""
 
     locator_version: Literal["competition-native-dataset-source-locator:2.9"] = (
@@ -81,10 +79,10 @@ class CompetitionNativeLegacyDatasetLocatorV2_9(V2Model):
 
     @property
     def locator_sha256(self) -> Sha256Digest:
-        return canonical_sha256_v2(self, domain=_LOCATOR_DOMAIN)
+        return canonical_sha256(self, domain=_LOCATOR_DOMAIN)
 
 
-class CompetitionNativeProceduralDatasetLocatorV2_9(V2Model):
+class CompetitionNativeProceduralDatasetLocatorV2_9(CanonicalModel):
     """One complete ProcTHOR locator with frozen source-content identity."""
 
     locator_version: Literal["competition-native-dataset-source-locator:2.9"] = (
@@ -110,7 +108,7 @@ class CompetitionNativeProceduralDatasetLocatorV2_9(V2Model):
 
     @property
     def locator_sha256(self) -> Sha256Digest:
-        return canonical_sha256_v2(self, domain=_LOCATOR_DOMAIN)
+        return canonical_sha256(self, domain=_LOCATOR_DOMAIN)
 
 
 CompetitionNativeDatasetSourceLocatorV2_9 = Annotated[
@@ -120,7 +118,7 @@ CompetitionNativeDatasetSourceLocatorV2_9 = Annotated[
 ]
 
 
-class CaptureSettings(V2Model):
+class CaptureSettings(CanonicalModel):
     """Read-only runtime settings shared by every source in the prefix."""
 
     settings_version: Literal["competition-native-dataset-capture-settings:2.9"] = (
@@ -145,7 +143,7 @@ class CaptureSettings(V2Model):
 def _source_manifest_sha256(
     manifest: SourcePlanManifest,
 ) -> Sha256Digest:
-    return canonical_sha256_v2(
+    return canonical_sha256(
         manifest.model_dump(mode="json"),
         domain=_SOURCE_MANIFEST_DOMAIN,
     )
@@ -157,7 +155,7 @@ def _source_locators(
     locators: list[CompetitionNativeDatasetSourceLocatorV2_9] = []
     for entry in manifest.sources:
         source = entry.source
-        if type(source) is LegacySource:
+        if type(source) is LegacyAI2ThorSource:
             locators.append(
                 CompetitionNativeLegacyDatasetLocatorV2_9(
                     source_id=entry.source_id,
@@ -220,7 +218,7 @@ def _source_refs(
 CompetitionNativeDatasetCaptureSettingsV2_9 = CaptureSettings
 
 
-class CapturePlan(V2Model):
+class CapturePlan(CanonicalModel):
     """The only supported manifest-to-roster capture plan."""
 
     plan_version: Literal["competition-native-dataset-capture-plan:2.9.3"] = (
@@ -267,7 +265,7 @@ class CapturePlan(V2Model):
 
     @property
     def plan_sha256(self) -> Sha256Digest:
-        return canonical_sha256_v2(self, domain=_PLAN_DOMAIN_V2_9_3)
+        return canonical_sha256(self, domain=_CURRENT_PLAN_HASH_DOMAIN)
 
 
 CompetitionNativeDatasetCapturePlanV2_9_3 = CapturePlan
@@ -288,7 +286,7 @@ class RetainedCapturePlanVerification:
 
 def _parse_capture_plan(payload: bytes) -> CapturePlan:
     plan = CapturePlan.model_validate_json(payload, strict=True)
-    if payload != canonical_json_bytes_v2(plan) + b"\n":
+    if payload != canonical_json_bytes(plan) + b"\n":
         raise ValueError("dataset capture plan is not canonical")
     return plan
 
@@ -482,7 +480,7 @@ def publish_capture_plan(plan: CapturePlan, output_root: Path) -> CapturePlan:
             plan.model_dump(mode="python", warnings="error"),
             strict=True,
         )
-        payload = canonical_json_bytes_v2(checked) + b"\n"
+        payload = canonical_json_bytes(checked) + b"\n"
         if len(payload) > _MAX_PLAN_BYTES:
             raise ValueError("dataset capture plan exceeds byte limit")
         checksum = f"{hashlib.sha256(payload).hexdigest()}  plan.json\n".encode("ascii")
@@ -670,7 +668,10 @@ def build_legacy_capture_plan(
             SourcePlanEntry(
                 source_id=f"source-{index:04d}",
                 scene_id=scene_name,
-                source=LegacySource(kind="legacy-ai2thor", scene_name=scene_name),
+                source=LegacyAI2ThorSource(
+                    kind="legacy-ai2thor",
+                    scene_name=scene_name,
+                ),
             )
             for index, scene_name in enumerate(scene_names)
         ),

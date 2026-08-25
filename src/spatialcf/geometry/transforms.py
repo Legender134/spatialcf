@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from spatialcf.domain.models import Quaternion, Vec3
+from spatialcf.domain.scene import Quaternion, Vec3
 
 
 def ai2thor_position_to_world(value: Vec3) -> Vec3:
@@ -43,4 +43,6 @@ def transform_point(matrix: np.ndarray, point: Vec3) -> Vec3:
     if transformed[3] == 0:
         raise ValueError("point transformed to infinity")
     transformed = transformed / transformed[3]
-    return Vec3(x=float(transformed[0]), y=float(transformed[1]), z=float(transformed[2]))
+    return Vec3(
+        x=float(transformed[0]), y=float(transformed[1]), z=float(transformed[2])
+    )

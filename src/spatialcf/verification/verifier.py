@@ -5,8 +5,14 @@ from dataclasses import dataclass
 
 from shapely.geometry import Point, Polygon
 
-from spatialcf.domain.enums import QualityTier, Relation, RelationAxis, SolverStatus
-from spatialcf.domain.models import InterventionSpec, Scene, SceneObject
+from spatialcf.domain.request import (
+    InterventionSpec,
+    QualityTier,
+    Relation,
+    RelationAxis,
+    SolverStatus,
+)
+from spatialcf.domain.scene import Scene, SceneObject
 from spatialcf.geometry.obb import inside_room, obb_footprint, obbs_intersect_3d
 from spatialcf.geometry.regions import subject_position_region_geometry
 from spatialcf.relations.engine import RelationEngine
@@ -118,7 +124,9 @@ class Verifier:
             or not runtime_pose_subject_object_id
             or runtime_pose_subject_object_id != spec.subject_id
         ):
-            raise ValueError("runtime pose authority must name the intervention subject")
+            raise ValueError(
+                "runtime pose authority must name the intervention subject"
+            )
         before_ids = {item.object_id for item in before.objects}
         after_ids = {item.object_id for item in after.objects}
         if not set(delegated) <= before_ids & after_ids:
@@ -176,20 +184,11 @@ class Verifier:
         except KeyError:
             return self._invalid("unknown_spec_target")
 
-        if (
-            not subject_before.request_eligible
-            or not reference_before.request_eligible
-        ):
+        if not subject_before.request_eligible or not reference_before.request_eligible:
             errors.append("request_endpoint_ineligible")
-        if (
-            subject_after.request_eligible
-            != subject_before.request_eligible
-        ):
+        if subject_after.request_eligible != subject_before.request_eligible:
             errors.append("subject_request_eligibility_changed")
-        if (
-            reference_after.request_eligible
-            != reference_before.request_eligible
-        ):
+        if reference_after.request_eligible != reference_before.request_eligible:
             errors.append("reference_request_eligibility_changed")
         if not subject_before.movable or spec.subject_id in before.pinned_object_ids:
             errors.append("subject_not_movable")
@@ -268,8 +267,10 @@ class Verifier:
             except KeyError:
                 errors.append("support_missing")
             else:
-                if not obb_footprint(support.obb).buffer(1e-6).covers(
-                    obb_footprint(subject_after.obb)
+                if (
+                    not obb_footprint(support.obb)
+                    .buffer(1e-6)
+                    .covers(obb_footprint(subject_after.obb))
                 ):
                     errors.append("support_invalid")
 
@@ -314,7 +315,10 @@ class Verifier:
             spec.relation_before,
             spec.camera_id,
         )
-        if source.status is SolverStatus.NOT_VISIBLE or target.status is SolverStatus.NOT_VISIBLE:
+        if (
+            source.status is SolverStatus.NOT_VISIBLE
+            or target.status is SolverStatus.NOT_VISIBLE
+        ):
             return VerificationResult(
                 SolverStatus.NOT_VISIBLE,
                 QualityTier.REJECTED,
@@ -364,10 +368,9 @@ class Verifier:
             spec.camera_id,
         )
 
-        if (
-            reverse_before != self._converses(forward_before)
-            or reverse_after != self._converses(forward_after)
-        ):
+        if reverse_before != self._converses(
+            forward_before
+        ) or reverse_after != self._converses(forward_after):
             return self._rejected("reverse_relation_inconsistent")
 
         target_collateral_axes: set[RelationAxis] = set()
@@ -409,9 +412,13 @@ class Verifier:
                 after, first.object_id, second.object_id, spec.camera_id
             )
             for relation in sorted(old - new, key=lambda item: item.value):
-                changed.append(f"-{first.object_id}:{relation.value}:{second.object_id}")
+                changed.append(
+                    f"-{first.object_id}:{relation.value}:{second.object_id}"
+                )
             for relation in sorted(new - old, key=lambda item: item.value):
-                changed.append(f"+{first.object_id}:{relation.value}:{second.object_id}")
+                changed.append(
+                    f"+{first.object_id}:{relation.value}:{second.object_id}"
+                )
             if (
                 old != new
                 and frozenset({first.object_id, second.object_id}) != target_pair
@@ -437,14 +444,14 @@ class Verifier:
             (
                 (first, second)
                 for index, first in enumerate(objects)
-                for second in objects[index + 1:]
+                for second in objects[index + 1 :]
                 if spec.subject_id in {first.object_id, second.object_id}
             )
             if stationary_views_unchanged
             else (
                 (first, second)
                 for index, first in enumerate(objects)
-                for second in objects[index + 1:]
+                for second in objects[index + 1 :]
             )
         )
         for first, second in unordered_pairs:

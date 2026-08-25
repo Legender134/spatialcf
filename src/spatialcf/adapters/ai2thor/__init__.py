@@ -1,0 +1,161 @@
+"""AI2-THOR adapter facade and its final concrete implementation leaves."""
+
+from __future__ import annotations
+
+from spatialcf.adapters.ai2thor.adapter import (  # noqa: F401
+    AI2ThorAdapter,
+    ControllerFactory,
+    _default_controller_factory,
+    _load_default_controller_type,
+)
+from spatialcf.adapters.ai2thor.camera import (  # noqa: F401
+    _CAMERA_POSITION_TOLERANCE_M,
+    _NATIVE_NAVIGATION_GRID_SIZE_M,
+    _OBJECT_GEOMETRY_TOLERANCE_M,
+    _camera_position_residual_m,
+    _camera_position_residual_within_tolerance,
+)
+from spatialcf.adapters.ai2thor.capture import (  # noqa: F401
+    _camera,
+    _canonical_camera_observed_scene,
+    _npy_bytes,
+    _obb_corners,
+    _object,
+    _objects_by_name,
+    _observation_from_event,
+    _oriented_bounds,
+    _png_bytes,
+    _pointcloud_bytes,
+    _projected_bounds,
+    _scene_from_event,
+    _stable_instance_pixel_counts,
+    _stable_observed_scene,
+    _validate_stem,
+    _validated_frames,
+    _view,
+    _without_cyclic_support_assignments,
+    _write_pointcloud,
+    canonical_procedural_house_sha256,
+    capture_current_observation,
+    render_assets,
+)
+from spatialcf.adapters.ai2thor.conversion import (  # noqa: F401
+    _ANGLE_TOLERANCE_DEGREES,
+    _EPSILON,
+    _quaternion_yaw,
+    _quaternions_close,
+    _rotation_matrix,
+    ai2thor_camera_world_to_camera,
+)
+from spatialcf.adapters.ai2thor.execution import (  # noqa: F401
+    _OBJECT_ROTATION_TOLERANCE_DEGREES,
+    _RUNTIME_RECEPTACLE_POSITION_RESIDUAL_M,
+)
+from spatialcf.adapters.ai2thor.models import (  # noqa: F401
+    _RECEPTACLE_TRIGGER_GRID_QUANTIZATION_M,
+    _RECEPTACLE_TRIGGER_GRID_SIDE,
+    _RECEPTACLE_TRIGGER_GRID_SIZE,
+    _TELEPORT_VERTICAL_GUARD_M,
+    AI2ThorAgentPose,
+    AI2ThorCameraApplication,
+    AI2ThorFloorEnvelope,
+    AI2ThorIsolatedEpisode,
+    AI2ThorNativeFeasibilityMap,
+    AI2ThorNativePosition,
+    AI2ThorNativeReturnError,
+    AI2ThorNativeSupportFact,
+    AI2ThorNativeSupportKind,
+    AI2ThorNavigationFeasibilityMap,
+    AI2ThorObservation,
+    AI2ThorPoseApplication,
+    AI2ThorProceduralScene,
+    AI2ThorReceptacleSpawnMap,
+    AI2ThorReceptacleSurfacePatch,
+    AI2ThorRuntimeError,
+    AI2ThorRuntimeIdentity,
+    AI2ThorSceneSettlement,
+    AI2ThorSettledCameraApplication,
+    AI2ThorSettlementTimeout,
+    _canonical_house_json_bytes,
+    _canonical_json_sha256,
+    _full_commit_sha,
+    _native_positions_sha256,
+    _nonempty_text,
+    _procedural_room_identity,
+    _receptacle_spawn_source_sha256,
+    _strict_finite_float,
+    _validate_json_tree,
+)
+from spatialcf.adapters.ai2thor.support import (  # noqa: F401
+    _REACHABLE_POSITION_QUANTIZATION_M,
+    _STRUCTURAL_OBJECT_TYPES,
+    _canonical_scene_sha256,
+    _cyclic_domain_object_ids,
+    _domain_object_metadata,
+    _grid_axis,
+    _receptacle_scene_sha256,
+    _strict_native_position,
+    _strict_receptacle_spawn_map,
+    _validated_native_object_metadata,
+    bind_ai2thor_reachable_positions,
+    build_ai2thor_native_support_facts,
+    build_ai2thor_receptacle_surface_patches,
+    build_navigation_feasibility_map,
+    build_receptacle_support_position_region,
+    canonicalize_ai2thor_reachable_positions,
+    capture_bound_ai2thor_receptacle_spawn_map,
+)
+from spatialcf.adapters.ai2thor.validation import (
+    observation_contract_errors,  # noqa: F401
+)
+from spatialcf.domain.scene import (  # noqa: F401
+    CollisionObstacle,
+    Scene,
+    SceneObject,
+    SubjectPositionRegion,
+    Vec3,
+)
+from spatialcf.domain.serialization import canonical_json_bytes  # noqa: F401
+from spatialcf.geometry.regions import (  # noqa: F401
+    conservative_navigation_position_geometry,
+    conservative_receptacle_position_geometry,
+    planar_polygon_payloads,
+)
+from spatialcf.geometry.transforms import (  # noqa: F401
+    ai2thor_position_to_world,
+    ai2thor_rotation_to_world,
+)
+
+__all__ = (
+    "AI2ThorAdapter",
+    "AI2ThorAgentPose",
+    "AI2ThorCameraApplication",
+    "AI2ThorFloorEnvelope",
+    "AI2ThorIsolatedEpisode",
+    "AI2ThorNativeFeasibilityMap",
+    "AI2ThorNativePosition",
+    "AI2ThorNativeReturnError",
+    "AI2ThorNativeSupportFact",
+    "AI2ThorNativeSupportKind",
+    "AI2ThorNavigationFeasibilityMap",
+    "AI2ThorObservation",
+    "AI2ThorPoseApplication",
+    "AI2ThorProceduralScene",
+    "AI2ThorReceptacleSpawnMap",
+    "AI2ThorReceptacleSurfacePatch",
+    "AI2ThorRuntimeError",
+    "AI2ThorRuntimeIdentity",
+    "AI2ThorSceneSettlement",
+    "AI2ThorSettledCameraApplication",
+    "AI2ThorSettlementTimeout",
+    "ai2thor_camera_world_to_camera",
+    "ai2thor_position_to_world",
+    "bind_ai2thor_reachable_positions",
+    "build_ai2thor_native_support_facts",
+    "build_ai2thor_receptacle_surface_patches",
+    "build_navigation_feasibility_map",
+    "build_receptacle_support_position_region",
+    "canonical_procedural_house_sha256",
+    "canonicalize_ai2thor_reachable_positions",
+    "capture_bound_ai2thor_receptacle_spawn_map",
+)

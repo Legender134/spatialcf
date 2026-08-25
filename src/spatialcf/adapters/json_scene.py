@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from spatialcf.adapters.base import RenderedAssets
-from spatialcf.domain.models import OBB, Scene, Vec3
+from spatialcf.domain.scene import OBB, Scene, Vec3
 
 
 class JsonSceneAdapter:
@@ -39,15 +39,21 @@ class JsonSceneAdapter:
             )
             views = {}
             for camera_id, view in obj.views.items():
-                views[camera_id] = view.model_copy(update={
-                    "bbox": view.bbox.model_copy(update={
-                        "xmin": view.bbox.xmin + 100 * dx,
-                        "xmax": view.bbox.xmax + 100 * dx,
-                    }),
-                    "camera_depth": view.camera_depth + dy,
-                })
+                views[camera_id] = view.model_copy(
+                    update={
+                        "bbox": view.bbox.model_copy(
+                            update={
+                                "xmin": view.bbox.xmin + 100 * dx,
+                                "xmax": view.bbox.xmax + 100 * dx,
+                            }
+                        ),
+                        "camera_depth": view.camera_depth + dy,
+                    }
+                )
             objects.append(
-                obj.model_copy(update={"position": position, "obb": obb, "views": views})
+                obj.model_copy(
+                    update={"position": position, "obb": obb, "views": views}
+                )
             )
         return scene.model_copy(update={"objects": tuple(objects)})
 
@@ -79,7 +85,9 @@ class JsonSceneAdapter:
             )
         rgb.save(rgb_path)
         instance.save(instance_path)
-        np.save(depth_path, np.full((camera.height, camera.width), 2.0, dtype=np.float32))
+        np.save(
+            depth_path, np.full((camera.height, camera.width), 2.0, dtype=np.float32)
+        )
         points = [obj.obb.center for obj in scene.objects]
         header = (
             "ply\nformat ascii 1.0\n"

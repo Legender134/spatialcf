@@ -11,7 +11,7 @@ from shapely.geometry import GeometryCollection, MultiPoint, MultiPolygon, Polyg
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from spatialcf.domain.models import (
+from spatialcf.domain.scene import (
     PlanarPolygon,
     SceneObject,
     SubjectPositionRegion,
@@ -37,10 +37,7 @@ def planar_polygon_geometry(component: PlanarPolygon) -> Polygon:
     """Parse one strict positive-area polygon component."""
     polygon = Polygon(
         [(point.x, point.y) for point in component.exterior],
-        [
-            [(point.x, point.y) for point in hole]
-            for hole in component.holes
-        ],
+        [[(point.x, point.y) for point in hole] for hole in component.holes],
     )
     polygon = _finite_geometry(polygon, "planar polygon")
     if not isinstance(polygon, Polygon) or polygon.is_empty or polygon.area <= 0.0:
@@ -83,8 +80,7 @@ def planar_polygon_payloads(geometry: BaseGeometry) -> tuple[PlanarPolygon, ...]
                 ),
                 holes=tuple(
                     tuple(
-                        Vec2(x=float(x), y=float(y))
-                        for x, y in tuple(ring.coords)[:-1]
+                        Vec2(x=float(x), y=float(y)) for x, y in tuple(ring.coords)[:-1]
                     )
                     for ring in polygon.interiors
                 ),
@@ -122,9 +118,7 @@ def _convex_center_locus(
 ) -> BaseGeometry:
     locus: BaseGeometry = container
     for x, y in relative_vertices:
-        locus = _polygonal(
-            locus.intersection(translate(container, xoff=-x, yoff=-y))
-        )
+        locus = _polygonal(locus.intersection(translate(container, xoff=-x, yoff=-y)))
         if locus.is_empty:
             break
     return locus
@@ -159,9 +153,7 @@ def conservative_receptacle_position_geometry(
             raise ValueError(f"receptacle patch {index} bounds must be finite")
         if xmin >= xmax or ymin >= ymax:
             raise ValueError(f"receptacle patch {index} must have positive area")
-        patch = Polygon(
-            [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
-        )
+        patch = Polygon([(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)])
         locus = _convex_center_locus(patch, relative_vertices)
         if not locus.is_empty:
             loci.append(locus)

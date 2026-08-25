@@ -1,8 +1,8 @@
 import math
 from dataclasses import dataclass
 
-from spatialcf.domain.enums import Relation, SolverStatus
-from spatialcf.domain.models import ObjectView, Scene
+from spatialcf.domain.request import Relation, SolverStatus
+from spatialcf.domain.scene import ObjectView, Scene
 from spatialcf.geometry.obb import ground_gap
 
 
@@ -61,7 +61,9 @@ class RelationEngine:
             return RelationResult(relation, False, 0.0, SolverStatus.NOT_VISIBLE)
         if relation in {Relation.LEFT, Relation.RIGHT, Relation.FRONT, Relation.BEHIND}:
             if relation in {Relation.LEFT, Relation.RIGHT}:
-                threshold = scene.camera_by_id(camera_id).width * self.LEFT_RIGHT_FRACTION
+                threshold = (
+                    scene.camera_by_id(camera_id).width * self.LEFT_RIGHT_FRACTION
+                )
                 delta = reference_view.bbox.center_x - subject_view.bbox.center_x
                 signed = delta if relation is Relation.LEFT else -delta
             else:
@@ -76,7 +78,9 @@ class RelationEngine:
                 abs_tol=self.COMPARISON_TOLERANCE,
             )
             if distance < threshold and not at_threshold:
-                return RelationResult(relation, False, distance - threshold, SolverStatus.AMBIGUOUS)
+                return RelationResult(
+                    relation, False, distance - threshold, SolverStatus.AMBIGUOUS
+                )
             return RelationResult(
                 relation=relation,
                 satisfied=signed >= threshold or (at_threshold and signed > 0.0),
@@ -86,8 +90,16 @@ class RelationEngine:
         gap = ground_gap(subject.obb, reference.obb)
         if self.NEAR_METERS < gap < self.FAR_METERS:
             return RelationResult(relation, False, 0.0, SolverStatus.AMBIGUOUS)
-        satisfied = gap <= self.NEAR_METERS if relation is Relation.NEAR else gap >= self.FAR_METERS
-        margin = self.NEAR_METERS - gap if relation is Relation.NEAR else gap - self.FAR_METERS
+        satisfied = (
+            gap <= self.NEAR_METERS
+            if relation is Relation.NEAR
+            else gap >= self.FAR_METERS
+        )
+        margin = (
+            self.NEAR_METERS - gap
+            if relation is Relation.NEAR
+            else gap - self.FAR_METERS
+        )
         return RelationResult(relation, satisfied, abs(margin), SolverStatus.SUCCESS)
 
     def pair_labels(

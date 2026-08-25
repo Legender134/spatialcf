@@ -12,7 +12,6 @@ from typing import Any
 import numpy as np
 
 from spatialcf.adapters.ai2thor import AI2ThorAdapter, AI2ThorRuntimeIdentity
-from spatialcf.solver.analytic_motion import AnalyticMotionModel
 
 
 def _box_corners(
@@ -290,15 +289,12 @@ def _project_native_edit_from_live_source(adapter: AI2ThorAdapter) -> None:
             subject = next(
                 item for item in event.metadata["objects"] if item["name"] == "Chair|0"
             )
-            view = AnalyticMotionModel().projected_view(
-                source,
-                "chair-id",
-                "main",
+            camera = source.camera_by_id("main")
+            event.instance_detections2D[subject["objectId"]] = _projected_detection(
                 float(subject["position"]["x"]),
                 float(subject["position"]["z"]),
-            )
-            event.instance_detections2D[subject["objectId"]] = np.asarray(
-                [view.bbox.xmin, view.bbox.ymin, view.bbox.xmax, view.bbox.ymax]
+                camera.width,
+                camera.height,
             )
         return event
 

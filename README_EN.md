@@ -2,10 +2,7 @@
 
 # SpatialCF
 
-SpatialCF generates verified spatial counterfactual datasets. It freezes requests
-from scene observations, plans single-object planar moves with a minimum-cost
-solver, executes edits through an Adapter, and freshly verifies the results and
-dataset files.
+SpatialCF generates verified spatial counterfactual datasets. Current chain: domain/core → adapter protocol → generation → fresh verification. It freezes requests from scene observations, plans single-object planar moves with a minimum-cost solver, connects platform facts and Canonical Edits through the Adapter protocol, and freshly verifies the results and dataset files.
 
 The Schema, solver, and verification logic are platform-neutral. Unity/AI2-THOR
 is the first Adapter and connects platform facts and native operations to the

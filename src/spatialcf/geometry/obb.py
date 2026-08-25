@@ -3,7 +3,7 @@ import math
 from shapely.affinity import rotate
 from shapely.geometry import Polygon
 
-from spatialcf.domain.models import OBB
+from spatialcf.domain.scene import OBB
 
 OBB_INTERSECTION_XY_AREA_TOLERANCE = 1e-9
 OBB_INTERSECTION_Z_OVERLAP_TOLERANCE = 1e-9
@@ -18,12 +18,14 @@ def _yaw_degrees(obb: OBB) -> float:
 def obb_footprint(obb: OBB) -> Polygon:
     hx = obb.extent.x / 2.0
     hy = obb.extent.y / 2.0
-    polygon = Polygon([
-        (obb.center.x - hx, obb.center.y - hy),
-        (obb.center.x + hx, obb.center.y - hy),
-        (obb.center.x + hx, obb.center.y + hy),
-        (obb.center.x - hx, obb.center.y + hy),
-    ])
+    polygon = Polygon(
+        [
+            (obb.center.x - hx, obb.center.y - hy),
+            (obb.center.x + hx, obb.center.y - hy),
+            (obb.center.x + hx, obb.center.y + hy),
+            (obb.center.x - hx, obb.center.y + hy),
+        ]
+    )
     return rotate(polygon, _yaw_degrees(obb), origin=(obb.center.x, obb.center.y))
 
 
