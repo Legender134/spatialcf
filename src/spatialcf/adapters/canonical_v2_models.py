@@ -9,17 +9,17 @@ from __future__ import annotations
 
 from pydantic import model_validator
 
-from spatialcf.domain.v2.base import FactAvailabilityV2, FactSetV2, V2Model
-from spatialcf.domain.v2.evidence import (
-    MappingProofKindV2,
-    MappingProofStatusV2,
-    NativeObjectBindingV2,
-    PreSemanticEvidenceEnvelopeV2,
+from spatialcf.domain.base import CanonicalModel, FactAvailabilityV2, FactSetV2
+from spatialcf.domain.evidence import (
+    MappingProofKind,
+    MappingProofStatus,
+    NativeObjectBinding,
+    PreSemanticEvidenceEnvelope,
 )
-from spatialcf.domain.v2.scene import CanonicalSceneV2
+from spatialcf.domain.scene import CanonicalScene
 
 
-class CanonicalSceneAdaptationV2(V2Model):
+class CanonicalSceneAdaptationV2(CanonicalModel):
     """Strict, frozen output of one native-to-Canonical fact translation.
 
     Every Canonical object has exactly one native binding. Each binding is
@@ -29,15 +29,15 @@ class CanonicalSceneAdaptationV2(V2Model):
     coverage in the matching facts family.
     """
 
-    scene: CanonicalSceneV2
-    pre_semantic_evidence: PreSemanticEvidenceEnvelopeV2
-    bindings: tuple[NativeObjectBindingV2, ...]
+    scene: CanonicalScene
+    pre_semantic_evidence: PreSemanticEvidenceEnvelope
+    bindings: tuple[NativeObjectBinding, ...]
 
     @classmethod
-    def _scene_model_type(cls) -> type[CanonicalSceneV2]:
+    def _scene_model_type(cls) -> type[CanonicalScene]:
         """Return the root scene type owned by this versioned seam."""
 
-        return CanonicalSceneV2
+        return CanonicalScene
 
     @model_validator(mode="after")
     def strictly_revalidate_and_close_bindings(self) -> CanonicalSceneAdaptationV2:
@@ -45,12 +45,12 @@ class CanonicalSceneAdaptationV2(V2Model):
         # explicitly here also documents and preserves this public trust
         # boundary if their construction path changes later.
         scene = type(self)._scene_model_type().model_validate(self.scene, strict=True)
-        evidence = PreSemanticEvidenceEnvelopeV2.model_validate(
+        evidence = PreSemanticEvidenceEnvelope.model_validate(
             self.pre_semantic_evidence,
             strict=True,
         )
         bindings = tuple(
-            NativeObjectBindingV2.model_validate(binding, strict=True)
+            NativeObjectBinding.model_validate(binding, strict=True)
             for binding in self.bindings
         )
 
@@ -83,8 +83,8 @@ class CanonicalSceneAdaptationV2(V2Model):
         expected_ids_by_kind = _expected_fact_ids_by_proof_kind(scene)
         verified_ids_by_kind = {kind: set() for kind in expected_ids_by_kind}
         unsupported_kinds = {
-            MappingProofKindV2.RELATION_NORMALIZATION,
-            MappingProofKindV2.WRITE_BACK,
+            MappingProofKind.RELATION_NORMALIZATION,
+            MappingProofKind.WRITE_BACK,
         }
         for proof in evidence.mapping_proofs:
             if proof.kind in unsupported_kinds:
@@ -98,7 +98,7 @@ class CanonicalSceneAdaptationV2(V2Model):
                     f"{proof.kind.value} proof references wrong-family or unknown "
                     "Canonical facts: " + ", ".join(sorted(dangling_ids))
                 )
-            if proof.status is MappingProofStatusV2.VERIFIED:
+            if proof.status is MappingProofStatus.VERIFIED:
                 verified_ids_by_kind[proof.kind].update(proof.canonical_ids)
 
         for kind, expected_ids in expected_ids_by_kind.items():
@@ -112,7 +112,7 @@ class CanonicalSceneAdaptationV2(V2Model):
         identity_proof_ids = {
             proof.proof_id
             for proof in evidence.mapping_proofs
-            if proof.kind is MappingProofKindV2.ENTITY_IDENTITY
+            if proof.kind is MappingProofKind.ENTITY_IDENTITY
         }
         consumed_identity_proof_ids: set[str] = set()
         for binding in bindings:
@@ -122,8 +122,8 @@ class CanonicalSceneAdaptationV2(V2Model):
                     "native object binding references unknown mapping proof"
                 )
             if (
-                proof.kind is not MappingProofKindV2.ENTITY_IDENTITY
-                or proof.status is not MappingProofStatusV2.VERIFIED
+                proof.kind is not MappingProofKind.ENTITY_IDENTITY
+                or proof.status is not MappingProofStatus.VERIFIED
             ):
                 raise ValueError(
                     "native object binding requires a VERIFIED ENTITY_IDENTITY proof"
@@ -157,7 +157,7 @@ class CanonicalSceneAdaptationV2(V2Model):
         return self
 
 
-def _known_fact_ids(facts: FactSetV2[V2Model], id_field: str) -> set[str]:
+def _known_fact_ids(facts: FactSetV2[CanonicalModel], id_field: str) -> set[str]:
     if facts.availability is not FactAvailabilityV2.KNOWN:
         return set()
     values = (
@@ -169,25 +169,25 @@ def _known_fact_ids(facts: FactSetV2[V2Model], id_field: str) -> set[str]:
 
 
 def _expected_fact_ids_by_proof_kind(
-    scene: CanonicalSceneV2,
-) -> dict[MappingProofKindV2, set[str]]:
+    scene: CanonicalScene,
+) -> dict[MappingProofKind, set[str]]:
     return {
-        MappingProofKindV2.ENTITY_IDENTITY: _known_fact_ids(
+        MappingProofKind.ENTITY_IDENTITY: _known_fact_ids(
             scene.objects,
             "object_id",
         ),
-        MappingProofKindV2.GEOMETRY: set().union(
+        MappingProofKind.GEOMETRY: set().union(
             _known_fact_ids(scene.geometry_instances, "geometry_id"),
             _known_fact_ids(scene.collision_bodies, "body_id"),
             _known_fact_ids(scene.workspace_boundaries, "fact_id"),
             _known_fact_ids(scene.known_free_spaces, "fact_id"),
         ),
-        MappingProofKindV2.SUPPORT: _known_fact_ids(
+        MappingProofKind.SUPPORT: _known_fact_ids(
             scene.support_surfaces,
             "surface_id",
         ),
-        MappingProofKindV2.CAMERA: _known_fact_ids(scene.cameras, "camera_id"),
-        MappingProofKindV2.OBSERVATION_NORMALIZATION: _known_fact_ids(
+        MappingProofKind.CAMERA: _known_fact_ids(scene.cameras, "camera_id"),
+        MappingProofKind.OBSERVATION_NORMALIZATION: _known_fact_ids(
             scene.baseline_observations,
             "observation_id",
         ),

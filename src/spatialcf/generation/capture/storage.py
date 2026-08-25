@@ -9,16 +9,7 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from spatialcf.domain.v2.serialization import canonical_json_bytes_v2
-from spatialcf.generation._internal.evidence.camera import (
-    SourceCameraEvidence,
-)
-from spatialcf.generation._internal.evidence.reachability import (
-    CandidateTargetReachability,
-)
-from spatialcf.generation._internal.evidence.surface import (
-    SourceSurfaceEvidence,
-)
+from spatialcf.domain.serialization import canonical_json_bytes
 from spatialcf.generation.capture.compiler import compile_roster
 from spatialcf.generation.capture.models import (
     CompetitionNativeCandidateInventoryV2_9,
@@ -29,6 +20,11 @@ from spatialcf.generation.capture.models import (
     RosterCompilation,
     RosterPolicy,
     RosterSummary,
+    SourceCameraEvidence,
+    SourceSurfaceEvidence,
+)
+from spatialcf.generation.capture.reachability import (
+    CandidateTargetReachability,
 )
 from spatialcf.generation.errors import require_wire_version
 from spatialcf.verification.filesystem import (
@@ -99,7 +95,7 @@ def _request_manifest_max_bytes(policy: RosterPolicy) -> int:
 
 
 def _json_line(value: object) -> bytes:
-    return canonical_json_bytes_v2(value) + b"\n"
+    return canonical_json_bytes(value) + b"\n"
 
 
 def _publication_payloads(compilation: RosterCompilation) -> dict[str, bytes]:
@@ -353,7 +349,7 @@ def _read_canonical_json_fd(
     return value, hashlib.sha256(payload).hexdigest()
 
 
-def _stat_fingerprint_v2_9(result: os.stat_result) -> tuple[int, ...]:
+def _current_stat_fingerprint(result: os.stat_result) -> tuple[int, ...]:
     return (
         result.st_dev,
         result.st_ino,
@@ -392,7 +388,7 @@ def _read_canonical_jsonl_fd(
         if (
             not stat.S_ISREG(before.st_mode)
             or before.st_nlink != 1
-            or _stat_fingerprint_v2_9(before) != _stat_fingerprint_v2_9(expected)
+            or _current_stat_fingerprint(before) != _current_stat_fingerprint(expected)
         ):
             raise ValueError(f"candidate roster input must be regular: {name}")
         while True:
@@ -425,8 +421,8 @@ def _read_canonical_jsonl_fd(
         if (
             buffer
             or total != after.st_size
-            or _stat_fingerprint_v2_9(before) != _stat_fingerprint_v2_9(after)
-            or _stat_fingerprint_v2_9(after) != _stat_fingerprint_v2_9(current)
+            or _current_stat_fingerprint(before) != _current_stat_fingerprint(after)
+            or _current_stat_fingerprint(after) != _current_stat_fingerprint(current)
         ):
             raise ValueError(f"candidate roster input changed while read: {name}")
     finally:

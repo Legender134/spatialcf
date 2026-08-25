@@ -13,8 +13,8 @@ from urllib.parse import urlsplit
 import pytest
 from typer.testing import CliRunner
 
-import spatialcf.adapters.ai2thor as ai2thor_module
 import spatialcf.cli as public_cli
+from spatialcf.adapters.ai2thor import capture as capture_module
 from spatialcf.generation import generate_dataset, read_dataset_records
 from tests.public_smoke._fake_runtime import READMEAdapterFactory
 
@@ -254,7 +254,7 @@ def test_readme_fake_adapter_uses_synthetic_runtime_identity_without_metadata(
     def reject_distribution_metadata(_name: str) -> str:
         raise AssertionError("fake runtime consulted installed package metadata")
 
-    monkeypatch.setattr(ai2thor_module, "package_version", reject_distribution_metadata)
+    monkeypatch.setattr(capture_module, "package_version", reject_distribution_metadata)
     factory = READMEAdapterFactory()
 
     with factory(["FloorPlan2"], width=80, height=60, seed=20260723) as adapter:

@@ -2,9 +2,7 @@
 
 # SpatialCF
 
-SpatialCF 用于生成经过验证的空间反事实数据集。它从场景观测中冻结请求，使用最小代价
-求解器规划单物体平面移动，通过 Adapter 在原生环境执行编辑，再对结果和数据集文件进行
-fresh verification。
+SpatialCF 用于生成经过验证的空间反事实数据集。当前链路：domain/core → adapter protocol → generation → fresh verification。它从场景观测中冻结请求，使用最小代价求解器规划单物体平面移动，由 Adapter protocol 将平台事实和 Canonical Edit 接入 generation，再对结果和数据集文件重新验证。
 
 Schema、求解器和验证逻辑均为平台无关设计。Unity/AI2-THOR 是首个 Adapter，只负责把
 平台事实和原生操作连接到这条公共生成链。

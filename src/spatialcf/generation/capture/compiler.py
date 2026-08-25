@@ -12,41 +12,20 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from spatialcf.adapters.ai2thor import AI2ThorAgentPose, AI2ThorNativePosition
-from spatialcf.domain.enums import Relation, SolverStatus
-from spatialcf.domain.models import Scene
-from spatialcf.domain.v2.base import V2Model
-from spatialcf.domain.v2.serialization import (
-    canonical_json_bytes_v2,
-    canonical_sha256_v2,
+from spatialcf.adapters.base import AdapterPose, AdapterPosition
+from spatialcf.domain.base import CanonicalModel
+from spatialcf.domain.request import Relation, SolverStatus
+from spatialcf.domain.scene import Scene
+from spatialcf.domain.serialization import (
+    canonical_json_bytes,
+    canonical_sha256,
 )
-from spatialcf.generation._internal.evidence.camera import (
+from spatialcf.generation.capture.models import (
     CameraPolicy,
     CompetitionNativeCameraPlacementPositionV2_9_4,
     CompetitionNativeCameraPlacementRosterEntryV2_9_4,
     CompetitionNativeCameraScoreFamilyV2_9_3,
     CompetitionNativeCameraScoreV2_9_4,
-    SourceCameraEvidence,
-    build_competition_native_camera_pose_bank_v2_9_3,
-    competition_native_camera_pose_bank_sha256_v2_9_3,
-    score_competition_native_camera_scene_v2_9_3,
-    score_competition_native_editable_camera_scene_v2_9_4,
-    select_competition_native_camera_score_index_v2_9_3,
-    select_competition_native_camera_score_index_v2_9_4,
-    verify_competition_native_camera_observation_binding_v2_9_3,
-    verify_competition_native_solver_camera_binding_v2_9_3,
-)
-from spatialcf.generation._internal.evidence.reachability import (
-    CandidateTargetReachability,
-    TargetReachabilityStatus,
-    derive_competition_native_candidate_target_reachability_from_prepared_v2_9_4,
-    prepare_competition_native_target_reachability_source_v2_9_4,
-)
-from spatialcf.generation._internal.evidence.surface import (
-    SourceSurfaceEvidence,
-    verify_source_surface_evidence,
-)
-from spatialcf.generation.capture.models import (
     CompetitionNativeCandidateInventoryV2_9,
     CompetitionNativeCandidateRosterManifestV2_9,
     CompetitionNativeCandidateStateCountV2_9,
@@ -67,7 +46,24 @@ from spatialcf.generation.capture.models import (
     RosterCompilation,
     RosterPolicy,
     RosterSummary,
+    SourceCameraEvidence,
+    SourceSurfaceEvidence,
+    build_competition_native_camera_pose_bank_v2_9_3,
+    competition_native_camera_pose_bank_sha256_v2_9_3,
+    score_competition_native_camera_scene_v2_9_3,
+    score_competition_native_editable_camera_scene_v2_9_4,
+    select_competition_native_camera_score_index_v2_9_3,
+    select_competition_native_camera_score_index_v2_9_4,
     validate_competition_native_runtime_source_lineage_v2_9,
+    verify_competition_native_camera_observation_binding_v2_9_3,
+    verify_competition_native_solver_camera_binding_v2_9_3,
+    verify_source_surface_evidence,
+)
+from spatialcf.generation.capture.reachability import (
+    CandidateTargetReachability,
+    TargetReachabilityStatus,
+    derive_competition_native_candidate_target_reachability_from_prepared_v2_9_4,
+    prepare_competition_native_target_reachability_source_v2_9_4,
 )
 from spatialcf.relations.engine import RelationEngine
 
@@ -81,7 +77,7 @@ _MAX_OBJECTS_PER_SCENE = 96
 _MAX_CANDIDATES_TOTAL = 40_000
 
 
-class _RosterCore(V2Model):
+class _RosterCore(CanonicalModel):
     policy: RosterPolicy
     scene_inventory: tuple[CompetitionNativeSourceCaptureOutcomeV2_9, ...] = Field(
         max_length=_MAX_POLICY_SOURCES
@@ -108,7 +104,7 @@ class _RosterCore(V2Model):
 
 
 def _digest_order(*values: object) -> str:
-    return hashlib.sha256(canonical_json_bytes_v2(values)).hexdigest()
+    return hashlib.sha256(canonical_json_bytes(values)).hexdigest()
 
 
 def _rejection(
@@ -131,7 +127,7 @@ def _rejection(
     }
     return CompetitionNativeRosterRejectionV2_9(
         rejection_id="rejection-"
-        + canonical_sha256_v2(payload, domain=_REJECTION_ID_HASH_DOMAIN),
+        + canonical_sha256(payload, domain=_REJECTION_ID_HASH_DOMAIN),
         stage=stage,
         source_id=source_id,
         scene_id=scene_id,
@@ -286,7 +282,7 @@ def _candidate_identity(
         "subject_id": subject_id,
         "support_kind": support_kind.value,
     }
-    return "candidate-" + canonical_sha256_v2(payload, domain=_CANDIDATE_ID_HASH_DOMAIN)
+    return "candidate-" + canonical_sha256(payload, domain=_CANDIDATE_ID_HASH_DOMAIN)
 
 
 def _candidate_record(
@@ -412,7 +408,7 @@ def _select_candidates(
     requests: list[CompetitionNativeSelectedRequestV2_9] = []
     for item in selected:
         source = sources[item.source_id]
-        request_digest = canonical_sha256_v2(
+        request_digest = canonical_sha256(
             {
                 "candidate_id": item.candidate_id,
                 "selection_index": item.selection_index,
@@ -590,7 +586,7 @@ def _compile_competition_native_candidate_roster(
             }
             inventory = CompetitionNativeObjectInventoryV2_9(
                 inventory_id="object-"
-                + canonical_sha256_v2(identity_payload, domain=_OBJECT_ID_HASH_DOMAIN),
+                + canonical_sha256(identity_payload, domain=_OBJECT_ID_HASH_DOMAIN),
                 source_id=record.source.source_id,
                 scene_id=scene.scene_id,
                 split=record.source.split,
@@ -819,7 +815,7 @@ def _compile_competition_native_candidate_roster(
     )
 
 
-def _editable_camera_capture_roster_v2_9_4(
+def _surface_camera_capture_roster(
     capture: CompetitionNativeSourceCaptureV2_9,
 ) -> tuple[
     tuple[tuple[str, str], ...],
@@ -878,7 +874,7 @@ def _editable_camera_capture_roster_v2_9_4(
     return tuple(certified_pairs), tuple(roster_entries)
 
 
-def _verify_competition_native_camera_evidence_capture_v2_9_3(
+def _verify_camera_evidence_capture(
     capture: CompetitionNativeSourceCaptureV2_9,
     evidence: SourceCameraEvidence,
     policy: CameraPolicy,
@@ -902,9 +898,7 @@ def _verify_competition_native_camera_evidence_capture_v2_9_3(
     )
 
     if type(checked_evidence.score) is CompetitionNativeCameraScoreV2_9_4:
-        pairs, _placement_roster = _editable_camera_capture_roster_v2_9_4(
-            checked_capture
-        )
+        pairs, _placement_roster = _surface_camera_capture_roster(checked_capture)
     else:
         support_by_id = {item.object_id: item for item in checked_capture.support_facts}
         pairs = tuple(
@@ -917,8 +911,8 @@ def _verify_competition_native_camera_evidence_capture_v2_9_3(
                 and support_by_id[item.object_id].support_object_id is not None
             )
         )
-    requested_fallback = AI2ThorAgentPose(
-        position=AI2ThorNativePosition(
+    requested_fallback = AdapterPose(
+        position=AdapterPosition(
             x=checked_evidence.requested_pose.x,
             y=checked_evidence.requested_pose.y,
             z=checked_evidence.requested_pose.z,
@@ -930,8 +924,8 @@ def _verify_competition_native_camera_evidence_capture_v2_9_3(
     fallback = (
         requested_fallback
         if not pairs
-        else AI2ThorAgentPose(
-            position=AI2ThorNativePosition(
+        else AdapterPose(
+            position=AdapterPosition(
                 x=checked_capture.reachable_positions[0].x,
                 y=checked_capture.reachable_positions[0].y,
                 z=checked_capture.reachable_positions[0].z,
@@ -945,7 +939,7 @@ def _verify_competition_native_camera_evidence_capture_v2_9_3(
         checked_capture.scene,
         pairs,
         tuple(
-            AI2ThorNativePosition(x=item.x, y=item.y, z=item.z)
+            AdapterPosition(x=item.x, y=item.y, z=item.z)
             for item in checked_capture.reachable_positions
         ),
         fallback,
@@ -975,7 +969,7 @@ def _verify_competition_native_camera_evidence_capture_v2_9_3(
         pose_bank[selected_index],
         checked_capture.scene.camera_by_id("main"),
     )
-    runtime_identity_sha256 = canonical_sha256_v2(
+    runtime_identity_sha256 = canonical_sha256(
         checked_capture.runtime_identity,
         domain=_RUNTIME_IDENTITY_HASH_DOMAIN,
     )
@@ -1029,7 +1023,7 @@ def score_competition_native_camera_capture_scene_v2_9_3(
     if type(checked_evidence.score) is not CompetitionNativeCameraScoreV2_9_4:
         return score_competition_native_camera_scene_v2_9_3(checked_scene)
 
-    _pairs, roster = _editable_camera_capture_roster_v2_9_4(checked_capture)
+    _pairs, roster = _surface_camera_capture_roster(checked_capture)
     return score_competition_native_editable_camera_scene_v2_9_4(
         checked_scene,
         roster,
@@ -1043,7 +1037,7 @@ def verify_competition_native_camera_evidence_capture_v2_9_3(
 ) -> SourceCameraEvidence:
     """Public exact verifier for either persisted camera-score generation."""
 
-    return _verify_competition_native_camera_evidence_capture_v2_9_3(
+    return _verify_camera_evidence_capture(
         capture,
         evidence,
         policy,
@@ -1082,7 +1076,7 @@ def compile_roster(
         for item in surface_evidence
     )
     checked_camera = tuple(
-        _verify_competition_native_camera_evidence_capture_v2_9_3(
+        _verify_camera_evidence_capture(
             capture_by_source_id[item.source_id],
             item,
             policy.camera_policy,
