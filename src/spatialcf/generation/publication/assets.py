@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image, UnidentifiedImageError
 from pydantic import Field, model_validator
 
-from spatialcf.adapters.base import AdapterObservation
+from spatialcf.adapters.base import AdapterObservation, InstanceEvidenceProvenance
 from spatialcf.domain.base import CanonicalId, CanonicalModel, Sha256Digest
 from spatialcf.domain.scene import Scene
 from spatialcf.domain.serialization import (
@@ -674,6 +674,9 @@ def _observation_from_bundle(
         pointcloud_ply=payloads[(phase, AssetKind.POINTCLOUD_PLY)],
         instance_pixel_counts=tuple(
             (item.object_id, item.pixel_count) for item in counts
+        ),
+        instance_evidence_provenance=(
+            InstanceEvidenceProvenance.PUBLICATION_REPLAY_COUNTS_ONLY
         ),
         is_settled=True,
     )

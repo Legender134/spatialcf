@@ -694,6 +694,100 @@ def _stable_instance_pixel_counts(
         counts[obj.object_id] = int(np.count_nonzero(mask))
     return counts
 
+def _stable_instance_colors(
+    self,
+    scene: Scene,
+    event: Any,
+) -> tuple[tuple[str, tuple[int, int, int]], ...]:
+    raw_objects = event.metadata.get("objects")
+    if not isinstance(raw_objects, list):
+        raise AI2ThorNativeReturnError("observation returned no object metadata")
+    all_native_ids = {
+        item.get("objectId")
+        for item in raw_objects
+        if isinstance(item, dict) and type(item.get("objectId")) is str
+    }
+    domain_objects = _domain_object_metadata(raw_objects)
+    native_by_name = {
+        str(item.get("name")): item for item in domain_objects if isinstance(item, dict)
+    }
+    if len(native_by_name) != len(domain_objects):
+        raise AI2ThorNativeReturnError("observation returned duplicate object names")
+    native_colors = getattr(event, "object_id_to_color", None)
+    if not isinstance(native_colors, Mapping):
+        raise AI2ThorNativeReturnError("observation returned invalid instance colors")
+    colors: dict[str, tuple[int, int, int]] = {}
+    for native_id, color in native_colors.items():
+        if (
+            type(native_id) is not str
+            or type(color) is not tuple
+            or len(color) != 3
+            or any(
+                type(channel) is not int or not 0 <= channel <= 255
+                for channel in color
+            )
+        ):
+            raise AI2ThorNativeReturnError(
+                "observation returned invalid instance colors"
+            )
+        colors[native_id] = color
+    stable_by_native: dict[str, str] = {}
+    for obj in scene.objects:
+        metadata = native_by_name.get(obj.name)
+        if metadata is None or type(metadata.get("objectId")) is not str:
+            raise AI2ThorNativeReturnError(
+                "observation returned invalid instance colors"
+            )
+        stable_by_native[metadata["objectId"]] = obj.object_id
+    counts = self._stable_instance_pixel_counts(scene, event)
+    masks = event.instance_masks
+    if any(
+        native_id not in all_native_ids and np.count_nonzero(mask) > 0
+        for native_id, mask in masks.items()
+    ):
+        raise AI2ThorNativeReturnError(
+            "observation returned unknown instance colors"
+        )
+    stable_colors: dict[str, tuple[int, int, int]] = {}
+    native_by_stable = {
+        stable_id: native_id for native_id, stable_id in stable_by_native.items()
+    }
+    for stable_id, count in counts.items():
+        native_id = native_by_stable[stable_id]
+        color = colors.get(native_id)
+        if count > 0 and color is None:
+            raise AI2ThorNativeReturnError(
+                "observation returned incomplete instance colors"
+            )
+        if color is None:
+            continue
+        mask = masks.get(native_id)
+        if mask is None:
+            mask = np.zeros((self.height, self.width), dtype=bool)
+        instance = np.asarray(
+            getattr(event, "instance_segmentation_frame", None)
+        )
+        png_mask = np.all(
+            instance == np.asarray(color, dtype=np.uint8), axis=2
+        )
+        if not np.array_equal(png_mask, mask):
+            raise AI2ThorNativeReturnError(
+                "observation instance colors disagree with PNG"
+            )
+        if count > 0:
+            stable_colors[stable_id] = color
+    if set(stable_colors) != {
+        object_id for object_id, count in counts.items() if count > 0
+    }:
+        raise AI2ThorNativeReturnError(
+            "observation returned incomplete instance colors"
+        )
+    if len(set(stable_colors.values())) != len(stable_colors):
+        raise AI2ThorNativeReturnError(
+            "observation returned duplicate instance colors"
+        )
+    return tuple(sorted(stable_colors.items()))
+
 def _observation_from_event(
     self,
     scene: Scene,
@@ -709,6 +803,7 @@ def _observation_from_event(
         pointcloud_ply=self._pointcloud_bytes(camera, depth, rgb),
         instance_pixel_counts=self._stable_instance_pixel_counts(scene, event),
         is_scene_at_rest=self._native_scene_at_rest(event),
+        instance_colors=self._stable_instance_colors(scene, event),
     )
 
 def capture_current_observation(self, scene: Scene) -> AI2ThorObservation:
@@ -862,6 +957,7 @@ class AI2ThorCaptureMixin:
     _png_bytes = staticmethod(_png_bytes)
     _npy_bytes = staticmethod(_npy_bytes)
     _stable_instance_pixel_counts = _stable_instance_pixel_counts
+    _stable_instance_colors = _stable_instance_colors
     _observation_from_event = _observation_from_event
     capture_current_observation = capture_current_observation
     _validated_frames = _validated_frames

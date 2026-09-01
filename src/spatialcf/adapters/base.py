@@ -1,6 +1,7 @@
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from types import TracebackType
@@ -651,6 +652,14 @@ class AdapterRuntimeIdentity:
             )
 
 
+class InstanceEvidenceProvenance(StrEnum):
+    """Whether instance sidecars are historical-neutral or one same-event readback."""
+
+    LEGACY_NEUTRAL = "LEGACY_NEUTRAL"
+    SAME_EVENT_INSTANCE_SEGMENTATION = "SAME_EVENT_INSTANCE_SEGMENTATION"
+    PUBLICATION_REPLAY_COUNTS_ONLY = "PUBLICATION_REPLAY_COUNTS_ONLY"
+
+
 @dataclass(frozen=True)
 class AdapterObservation:
     scene: Scene
@@ -664,6 +673,15 @@ class AdapterObservation:
     pointcloud_ply_sha256: str
     instance_pixel_counts: tuple[tuple[str, int], ...]
     is_settled: bool
+    # Derived sidecar: preserve legacy neutral/public equality identity. AI2-THOR
+    # capture must still provide and validate it; this is not a fallback signal.
+    instance_colors: tuple[tuple[str, tuple[int, int, int]], ...] = field(
+        default=(), compare=False
+    )
+    instance_evidence_provenance: InstanceEvidenceProvenance = field(
+        default=InstanceEvidenceProvenance.LEGACY_NEUTRAL,
+        compare=False,
+    )
 
     @classmethod
     def create(
@@ -676,6 +694,10 @@ class AdapterObservation:
         pointcloud_ply: bytes,
         instance_pixel_counts: tuple[tuple[str, int], ...],
         is_settled: bool,
+        instance_colors: tuple[tuple[str, tuple[int, int, int]], ...] = (),
+        instance_evidence_provenance: InstanceEvidenceProvenance = (
+            InstanceEvidenceProvenance.LEGACY_NEUTRAL
+        ),
     ) -> Self:
         return cls(
             scene=scene,
@@ -689,6 +711,10 @@ class AdapterObservation:
             pointcloud_ply_sha256=sha256(pointcloud_ply).hexdigest(),
             instance_pixel_counts=instance_pixel_counts,
             is_settled=is_settled,
+            instance_colors=tuple(
+                (object_id, tuple(color)) for object_id, color in instance_colors
+            ),
+            instance_evidence_provenance=instance_evidence_provenance,
         )
 
     def __post_init__(self) -> None:
@@ -739,8 +765,77 @@ class AdapterObservation:
             raise TypeError(
                 "adapter observation pixel counts must be sorted exact pairs"
             )
+        if self.instance_pixel_counts and {
+            item[0] for item in self.instance_pixel_counts
+        } != {obj.object_id for obj in self.scene.objects}:
+            raise ValueError(
+                "adapter observation pixel counts must cover every scene object"
+            )
         if type(self.is_settled) is not bool:
             raise TypeError("adapter observation settled flag must be exact")
+        if (
+            type(self.instance_colors) is not tuple
+            or any(
+                type(item) is not tuple
+                or len(item) != 2
+                or type(item[0]) is not str
+                or type(item[1]) is not tuple
+                or len(item[1]) != 3
+                or any(
+                    type(channel) is not int or not 0 <= channel <= 255
+                    for channel in item[1]
+                )
+                for item in self.instance_colors
+            )
+            or self.instance_colors != tuple(sorted(self.instance_colors))
+            or len({item[0] for item in self.instance_colors})
+            != len(self.instance_colors)
+            or len({item[1] for item in self.instance_colors})
+            != len(self.instance_colors)
+        ):
+            raise TypeError(
+                "adapter observation instance colors must be sorted exact RGB pairs"
+            )
+        positive_ids = {
+            object_id for object_id, count in self.instance_pixel_counts if count > 0
+        }
+        if (
+            self.instance_colors
+            and {item[0] for item in self.instance_colors} != positive_ids
+        ):
+            raise ValueError(
+                "adapter observation instance colors must cover positive pixels"
+            )
+        if type(self.instance_evidence_provenance) is not InstanceEvidenceProvenance:
+            raise TypeError("adapter observation instance evidence provenance is invalid")
+        if (
+            self.instance_evidence_provenance
+            is InstanceEvidenceProvenance.LEGACY_NEUTRAL
+        ):
+            if self.instance_pixel_counts or self.instance_colors:
+                raise ValueError(
+                    "adapter observation legacy neutral evidence requires empty sidecars"
+                )
+        elif (
+            self.instance_evidence_provenance
+            is InstanceEvidenceProvenance.PUBLICATION_REPLAY_COUNTS_ONLY
+        ):
+            if (
+                tuple(item[0] for item in self.instance_pixel_counts)
+                != tuple(sorted(obj.object_id for obj in self.scene.objects))
+                or self.instance_colors
+            ):
+                raise ValueError(
+                    "adapter observation publication replay requires full counts only"
+                )
+        elif (
+            tuple(item[0] for item in self.instance_pixel_counts)
+            != tuple(sorted(obj.object_id for obj in self.scene.objects))
+            or {item[0] for item in self.instance_colors} != positive_ids
+        ):
+            raise ValueError(
+                "adapter observation same-event evidence does not close scene sidecars"
+            )
 
 
 @dataclass(frozen=True)

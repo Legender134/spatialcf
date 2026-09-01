@@ -1432,6 +1432,8 @@ def _observation_with_scene(
         instance_png=observation.instance_png,
         pointcloud_ply=observation.pointcloud_ply,
         instance_pixel_counts=observation.instance_pixel_counts,
+        instance_colors=observation.instance_colors,
+        instance_evidence_provenance=observation.instance_evidence_provenance,
         is_settled=observation.is_settled,
     )
 
@@ -1445,6 +1447,8 @@ def _observation_asset_identity(
         observation.instance_png,
         observation.pointcloud_ply,
         observation.instance_pixel_counts,
+        observation.instance_colors,
+        observation.instance_evidence_provenance,
         observation.is_settled,
     )
 

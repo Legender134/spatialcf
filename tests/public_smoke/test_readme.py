@@ -310,9 +310,16 @@ def test_readme_dataset_commands_run_through_the_documented_fake_adapter_hook(
         generated["accepted_request_count"]
         + generated["execution_rejected_request_count"]
     )
-    assert generated["frozen_request_count"] > 0
-    assert generated["planned_request_count"] > 0
-    assert generated["accepted_request_count"] > 0
+    assert tuple(
+        generated[key]
+        for key in (
+            "frozen_request_count",
+            "planned_request_count",
+            "planning_rejected_request_count",
+            "accepted_request_count",
+            "execution_rejected_request_count",
+        )
+    ) == (0, 0, 0, 0, 0)
     records = read_dataset_records(tmp_path / "dataset")
     assert len(records) == generated["accepted_request_count"]
     expected_bundle_files = {

@@ -31,6 +31,7 @@ from spatialcf.domain.solver import (
 from spatialcf.generation.capture.models import (
     ReceptacleSurfacePatch,
     SourceSurfaceEvidence,
+    SourceViewFact,
     SubjectSurfaceEvidence,
 )
 from spatialcf.generation.capture.reachability import (
@@ -47,6 +48,7 @@ from spatialcf.generation.planning.problem import (
     _project_proxy,
     _project_proxy_problem,
 )
+from spatialcf.generation.planning.view_guard import evaluate_source_view_guard
 
 _DEFAULT_RADII_M = (0.02, 0.01, 0.005, 0.001)
 _NATIVE_SPAWN_RADIUS_M = 0.000001
@@ -608,6 +610,7 @@ def plan_endpoint(
     config: ContinuousYawSolverConfigV2_9,
     source_surface_evidence: SourceSurfaceEvidence,
     subject_surface_evidence: SubjectSurfaceEvidence,
+    source_view_fact: SourceViewFact | None,
     *,
     placement: SubjectPlacementFact,
     case_id: str,
@@ -616,6 +619,11 @@ def plan_endpoint(
     screening_domain_operations: int = 100_000,
 ) -> EndpointPlan:
     """Return the first current solver-certified source-only endpoint."""
+
+    if source_view_fact is None:
+        raise EndpointPlanRejected(("endpoint_plan:SOURCE_VIEW_MISSING",))
+    if type(source_view_fact) is not SourceViewFact:
+        raise TypeError("source_view_fact must be exact")
 
     if type(scene) is not Scene or type(intervention) is not InterventionSpec:
         raise TypeError("scene and intervention must be exact legacy values")
@@ -767,6 +775,17 @@ def plan_endpoint(
             if solved_mismatch is not None:
                 reasons.add(solved_mismatch)
                 continue
+            guard = evaluate_source_view_guard(
+                scene,
+                intervention,
+                source_view_fact,
+                solved.result.selected_witness.edit,
+                semantic_problem_sha256=proxy.semantic_problem.semantic_problem_sha256,
+                solve_result_sha256=solved.result.solve_result_sha256,
+            )
+            if guard.status != "PASSED":
+                reasons.add("endpoint_plan:SOURCE_VIEW_UNCERTIFIED")
+                continue
             return EndpointPlan(
                 planning_workspace=workspace,
                 endpoint_workspace=endpoint_workspace,
@@ -783,15 +802,21 @@ def plan_endpoint(
                 subject_surface_evidence_sha256=(
                     subject_surface_evidence.subject_surface_evidence_sha256
                 ),
+                semantic_problem_sha256=proxy.semantic_problem.semantic_problem_sha256,
                 proxy_bundle_sha256=proxy.proxy_bundle_sha256,
                 solve_result_sha256=solved.result.solve_result_sha256,
+                selected_edit_sha256=(
+                    solved.result.selected_witness.edit.edit_sha256
+                ),
+                source_view_fact_sha256=source_view_fact.source_view_fact_sha256,
+                source_view_guard=guard,
                 runtime_collision_delegated_native_object_ids=(
                     proxy.binding.runtime_collision_delegated_native_object_ids
                 ),
             )
-    raise EndpointPlanRejected(
-        tuple(reasons) or ("endpoint_plan:no_certified_single_patch_workspace",)
-    )
+    if "endpoint_plan:SOURCE_VIEW_UNCERTIFIED" in reasons:
+        raise EndpointPlanRejected(("endpoint_plan:SOURCE_VIEW_UNCERTIFIED",))
+    raise EndpointPlanRejected(tuple(reasons) or ("endpoint_plan:no_certified_single_patch_workspace",))
 
 
 __all__ = ("EndpointPlanRejected", "plan_endpoint")

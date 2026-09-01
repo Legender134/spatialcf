@@ -7,10 +7,11 @@ import math
 from dataclasses import dataclass
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from spatialcf.domain.base import CanonicalId, CanonicalModel, FiniteFloat, Sha256Digest
 from spatialcf.domain.problem import SemanticProblemV2_3
+from spatialcf.domain.request import Relation
 from spatialcf.domain.serialization import canonical_sha256
 from spatialcf.generation.capture.models import (
     CompetitionNativePlacementAvailabilityV2_9,
@@ -19,10 +20,14 @@ from spatialcf.generation.capture.models import (
     CompetitionNativeSupportKindV2_9,
     ReceptacleSurfacePatch,
 )
+from spatialcf.relations.engine import RelationEngine
 
 _BINDING_HASH_DOMAIN = "spatialcf.competition-native-proxy-binding.v2.9.4"
 _BUNDLE_HASH_DOMAIN = "spatialcf.competition-native-proxy-bundle.v2.9.4"
-_ENDPOINT_PLAN_HASH_DOMAIN = "spatialcf.competition-native-endpoint-plan.v2.9.4"
+_ENDPOINT_PLAN_HASH_DOMAIN = "spatialcf.competition-native-endpoint-plan.v2.9.5"
+_SOURCE_VIEW_GUARD_HASH_DOMAIN = (
+    "spatialcf.competition-native-source-view-guard.v2.9.5"
+)
 _NON_SUPPORT_COLLISION_MARGIN_M = 0.01
 _PROXY_POLICY_SHA256 = hashlib.sha256(
     b"spatialcf.competition-native-scene-proxy.v2.9.4\0"
@@ -41,6 +46,98 @@ def _require_sha256(value: object, label: str) -> str:
     ):
         raise ValueError(f"{label} must be lowercase SHA-256")
     return value
+
+
+class SourceViewObjectProxy(CanonicalModel):
+    object_id: CanonicalId
+    bbox_center_x_lower: FiniteFloat
+    bbox_center_x_upper: FiniteFloat
+    camera_depth_lower_m: FiniteFloat
+    camera_depth_upper_m: FiniteFloat
+    image_area_fraction_lower: FiniteFloat = Field(ge=0.0, le=1.0)
+    visible_fraction_lower: FiniteFloat = Field(ge=0.0, le=1.0)
+    truncated_fraction_upper: FiniteFloat = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_intervals(self) -> Self:
+        if self.bbox_center_x_lower > self.bbox_center_x_upper:
+            raise ValueError("source-view bbox-center interval is unordered")
+        if self.camera_depth_lower_m > self.camera_depth_upper_m:
+            raise ValueError("source-view camera-depth interval is unordered")
+        return self
+
+
+class SourceViewGuard(CanonicalModel):
+    guard_version: Literal["competition-native-source-view-guard:2.9.5"]
+    status: Literal["PASSED", "UNCERTIFIED"]
+    source_view_fact_sha256: Sha256Digest
+    semantic_problem_sha256: Sha256Digest
+    solve_result_sha256: Sha256Digest
+    edit_sha256: Sha256Digest
+    subject: SourceViewObjectProxy
+    reference: SourceViewObjectProxy
+    target_relation: Relation
+    target_satisfied: bool = Field(strict=True)
+    old_relation_satisfied: bool = Field(strict=True)
+    reasons: tuple[str, ...]
+    source_view_guard_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_guard(self) -> Self:
+        if self.subject.object_id == self.reference.object_id:
+            raise ValueError("source-view guard objects must be distinct")
+        fallback_values = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        has_fallback = any(
+            (
+                proxy.bbox_center_x_lower,
+                proxy.bbox_center_x_upper,
+                proxy.camera_depth_lower_m,
+                proxy.camera_depth_upper_m,
+                proxy.image_area_fraction_lower,
+                proxy.visible_fraction_lower,
+                proxy.truncated_fraction_upper,
+            )
+            == fallback_values
+            for proxy in (self.subject, self.reference)
+        )
+        if has_fallback and (
+            self.status != "UNCERTIFIED"
+            or not any(
+                reason.startswith(("projection:", "coverage:"))
+                for reason in self.reasons
+            )
+        ):
+            raise ValueError("source-view fallback requires a coverage reason")
+        if self.status == "PASSED":
+            visible = all(
+                proxy.visible_fraction_lower >= RelationEngine.MIN_VISIBLE_FRACTION
+                and proxy.image_area_fraction_lower
+                >= RelationEngine.MIN_IMAGE_AREA_FRACTION
+                and proxy.truncated_fraction_upper
+                <= RelationEngine.MAX_TRUNCATED_FRACTION
+                for proxy in (self.subject, self.reference)
+            )
+            if (
+                self.reasons
+                or not visible
+                or not self.target_satisfied
+                or self.old_relation_satisfied
+            ):
+                raise ValueError("passed source-view guard is not admissible")
+        elif (
+            not self.reasons
+            or self.reasons != tuple(sorted(set(self.reasons)))
+            or any(type(reason) is not str or not reason for reason in self.reasons)
+        ):
+            raise ValueError("uncertified source-view reasons must be canonical")
+        payload = self.model_dump(
+            mode="python", exclude={"source_view_guard_sha256"}
+        )
+        if self.source_view_guard_sha256 != canonical_sha256(
+            payload, domain=_SOURCE_VIEW_GUARD_HASH_DOMAIN
+        ):
+            raise ValueError("source-view guard digest mismatch")
+        return self
 
 
 class EndpointWorkspace(CanonicalModel):
@@ -366,15 +463,15 @@ class ProxyBundle(CanonicalModel):
 class EndpointPlan(CanonicalModel):
     """One current solver-certified endpoint wholly owned by a source patch."""
 
-    plan_version: Literal["competition-native-endpoint-plan:2.9.4"] = (
-        "competition-native-endpoint-plan:2.9.4"
+    plan_version: Literal["competition-native-endpoint-plan:2.9.5"] = (
+        "competition-native-endpoint-plan:2.9.5"
     )
     candidate_strategy: Literal[
         "stratified_directional_receptacle_patch_relation_ranked_"
-        "runtime_collision_delegated_bbox_visibility"
+        "runtime_collision_delegated_bbox_visibility_sampled_source_view_guard"
     ] = (
         "stratified_directional_receptacle_patch_relation_ranked_"
-        "runtime_collision_delegated_bbox_visibility"
+        "runtime_collision_delegated_bbox_visibility_sampled_source_view_guard"
     )
     planning_workspace: EndpointWorkspace
     endpoint_workspace: EndpointWorkspace
@@ -387,8 +484,12 @@ class EndpointPlan(CanonicalModel):
     placement_sha256: str
     surface_evidence_sha256: str
     subject_surface_evidence_sha256: str
+    semantic_problem_sha256: Sha256Digest
     proxy_bundle_sha256: str
     solve_result_sha256: str
+    selected_edit_sha256: Sha256Digest
+    source_view_fact_sha256: Sha256Digest
+    source_view_guard: SourceViewGuard
     runtime_collision_delegated_native_object_ids: tuple[CanonicalId, ...]
 
     @model_validator(mode="after")
@@ -415,10 +516,26 @@ class EndpointPlan(CanonicalModel):
             ("placement", self.placement_sha256),
             ("surface evidence", self.surface_evidence_sha256),
             ("subject surface evidence", self.subject_surface_evidence_sha256),
+            ("semantic problem", self.semantic_problem_sha256),
             ("proxy bundle", self.proxy_bundle_sha256),
             ("solve result", self.solve_result_sha256),
+            ("selected edit", self.selected_edit_sha256),
+            ("source-view fact", self.source_view_fact_sha256),
         ):
             _require_sha256(value, f"endpoint plan {label}")
+        if type(self.source_view_guard) is not SourceViewGuard:
+            raise TypeError("endpoint plan source-view guard must be exact")
+        if (
+            self.source_view_guard.status != "PASSED"
+            or self.source_view_guard.source_view_fact_sha256
+            != self.source_view_fact_sha256
+            or self.source_view_guard.solve_result_sha256
+            != self.solve_result_sha256
+            or self.source_view_guard.semantic_problem_sha256
+            != self.semantic_problem_sha256
+            or self.source_view_guard.edit_sha256 != self.selected_edit_sha256
+        ):
+            raise ValueError("endpoint plan source-view guard is not closed")
         return self
 
     @model_validator(mode="after")

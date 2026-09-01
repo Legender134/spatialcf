@@ -12,7 +12,12 @@ from dataclasses import asdict
 from hashlib import sha256
 from typing import Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from spatialcf.adapters.base import (
     AdapterCameraApplication,
@@ -1549,6 +1554,8 @@ def _strict_application(value: object) -> AdapterCameraApplication:
         pointcloud_ply=observation.pointcloud_ply,
         instance_pixel_counts=observation.instance_pixel_counts,
         is_settled=observation.is_settled,
+        instance_colors=observation.instance_colors,
+        instance_evidence_provenance=observation.instance_evidence_provenance,
     )
     if (
         rebuilt_observation != observation
@@ -2067,7 +2074,7 @@ __all__ = (
 
 from pydantic import Field, model_validator
 
-from spatialcf.domain.base import CanonicalModel
+from spatialcf.domain.base import CanonicalId, CanonicalModel
 
 _PATCH_HASH_DOMAIN = "spatialcf.competition-native-receptacle-surface-patch.v2.9.2"
 _SUBJECT_EVIDENCE_HASH_DOMAIN = (
@@ -2542,7 +2549,7 @@ from pydantic import Field, model_validator
 
 from spatialcf.domain.base import CanonicalModel
 from spatialcf.domain.request import Relation
-from spatialcf.domain.scene import SubjectPositionRegion, Vec2
+from spatialcf.domain.scene import BBox2D, SubjectPositionRegion, Vec2
 from spatialcf.domain.serialization import (
     canonical_json_bytes,
 )
@@ -3009,6 +3016,136 @@ def build_competition_native_subject_placement_fact_v2_9(
     )
 
 
+_SOURCE_VIEW_FACT_HASH_DOMAIN = (
+    "spatialcf.competition-native-source-view-fact.v2.9.5"
+)
+_SOURCE_VIEW_BINDING_HASH_DOMAIN = "spatialcf.source-view-binding.v1"
+_SOURCE_VIEW_SAMPLING_POLICY_SHA256 = canonical_sha256(
+    {
+        "local_quantization_m": 1e-5,
+        "maximum_samples": 76_800,
+        "render_proxy": "weighted_sampled_splat_z_buffer",
+        "representative": "minimum_finite_positive_depth_then_row_column",
+        "rounding": "nearest_even",
+        "tile_height": 2,
+        "tile_width": 2,
+        "weight": "object_mask_pixel_count_in_tile",
+    },
+    domain="spatialcf.competition-native-source-view-policy.v2.9.5",
+)
+
+
+class SourceViewObjectSamples(CanonicalModel):
+    object_id: CanonicalId
+    source_mask_bbox: BBox2D
+    source_mask_pixel_count: int = Field(strict=True, gt=0)
+    sample_rows: tuple[int, ...]
+    sample_columns: tuple[int, ...]
+    sample_weights: tuple[int, ...]
+    local_x_quantized: tuple[int, ...]
+    local_y_quantized: tuple[int, ...]
+    local_z_quantized: tuple[int, ...]
+
+    @model_validator(mode="after")
+    def validate_samples(self) -> Self:
+        arrays = (
+            self.sample_rows,
+            self.sample_columns,
+            self.sample_weights,
+            self.local_x_quantized,
+            self.local_y_quantized,
+            self.local_z_quantized,
+        )
+        if not self.sample_rows or len({len(item) for item in arrays}) != 1:
+            raise ValueError("source-view sample arrays must be equal and nonempty")
+        if any(type(value) is not int for array in arrays for value in array):
+            raise TypeError("source-view samples must contain exact integers")
+        if any(value < 0 for value in (*self.sample_rows, *self.sample_columns)):
+            raise ValueError("source-view sample pixels must be in bounds")
+        keys = tuple(
+            (row // 2, column // 2)
+            for row, column in zip(
+                self.sample_rows, self.sample_columns, strict=True
+            )
+        )
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("source-view sample tiles must be canonical")
+        if any(weight < 1 or weight > 4 for weight in self.sample_weights):
+            raise ValueError("source-view sample weights must be in [1, 4]")
+        if sum(self.sample_weights) != self.source_mask_pixel_count:
+            raise ValueError("source-view sample weights do not close mask count")
+        bbox_values = (
+            self.source_mask_bbox.xmin,
+            self.source_mask_bbox.ymin,
+            self.source_mask_bbox.xmax,
+            self.source_mask_bbox.ymax,
+        )
+        if any(
+            not math.isfinite(value) or value < 0 or not float(value).is_integer()
+            for value in bbox_values
+        ):
+            raise ValueError("source-view mask bbox must be an integer envelope")
+        xmin, ymin, xmax, ymax = (int(value) for value in bbox_values)
+        if xmin >= xmax or ymin >= ymax:
+            raise ValueError("source-view mask bbox must be nonempty and half-open")
+        if any(
+            row < ymin or row >= ymax or column < xmin or column >= xmax
+            for row, column in zip(self.sample_rows, self.sample_columns, strict=True)
+        ):
+            raise ValueError("source-view sample pixels must lie inside the mask bbox")
+        if self.source_mask_pixel_count > (xmax - xmin) * (ymax - ymin):
+            raise ValueError("source-view mask count exceeds the mask bbox area")
+        for row, column, weight in zip(
+            self.sample_rows,
+            self.sample_columns,
+            self.sample_weights,
+            strict=True,
+        ):
+            tile_ymin = (row // 2) * 2
+            tile_xmin = (column // 2) * 2
+            tile_area = max(0, min(ymax, tile_ymin + 2) - max(ymin, tile_ymin)) * max(
+                0, min(xmax, tile_xmin + 2) - max(xmin, tile_xmin)
+            )
+            if weight > tile_area:
+                raise ValueError("source-view sample weight exceeds its mask tile")
+        return self
+
+
+class SourceViewFact(CanonicalModel):
+    fact_version: Literal["competition-native-source-view-fact:2.9.5"]
+    source_id: CanonicalId
+    scene_id: CanonicalId
+    source_locator_sha256: Sha256Digest
+    runtime_identity_sha256: Sha256Digest
+    scene_sha256: Sha256Digest
+    camera_sha256: Sha256Digest
+    rgb_png_sha256: Sha256Digest
+    depth_npy_sha256: Sha256Digest
+    instance_png_sha256: Sha256Digest
+    sampling_policy_sha256: Sha256Digest
+    objects: tuple[SourceViewObjectSamples, ...]
+    source_view_fact_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_fact(self) -> Self:
+        object_ids = tuple(item.object_id for item in self.objects)
+        if not object_ids or object_ids != tuple(sorted(set(object_ids))):
+            raise ValueError("source-view object rows must be canonical")
+        if sum(len(item.sample_rows) for item in self.objects) > 76_800:
+            raise ValueError("source-view fact exceeds the sample cap")
+        if self.sampling_policy_sha256 != _SOURCE_VIEW_SAMPLING_POLICY_SHA256:
+            raise ValueError("source-view sampling policy changed")
+        payload = self.model_dump(
+            mode="python", exclude={"source_view_fact_sha256"}
+        )
+        expected = canonical_sha256(
+            payload, domain=_SOURCE_VIEW_FACT_HASH_DOMAIN
+        )
+        if self.source_view_fact_sha256 != expected:
+            raise ValueError("source-view fact digest mismatch")
+        return self
+
+
 def _capture_payload(
     *,
     source: CompetitionNativeSourceRefV2_9,
@@ -3024,8 +3161,9 @@ def _capture_payload(
     floor_envelope: CompetitionNativeFloorEnvelopeV2_9 | None,
     reachable_positions: tuple[CompetitionNativePositionV2_9, ...],
     placement_facts: tuple[CompetitionNativeSubjectPlacementFactV2_9, ...],
+    source_view_fact: SourceViewFact | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "depth_npy_sha256": depth_npy_sha256,
         "floor_envelope": None
         if floor_envelope is None
@@ -3046,6 +3184,9 @@ def _capture_payload(
         "source": source.model_dump(mode="json"),
         "support_facts": tuple(item.model_dump(mode="json") for item in support_facts),
     }
+    if source_view_fact is not None:
+        payload["source_view_fact"] = source_view_fact.model_dump(mode="json")
+    return payload
 
 
 def normalize_competition_native_source_scene_v2_9(scene: Scene) -> Scene:
@@ -3286,7 +3427,18 @@ class CompetitionNativeSourceCaptureV2_9(CanonicalModel):
     placement_facts: tuple[CompetitionNativeSubjectPlacementFactV2_9, ...] = Field(
         max_length=_MAX_OBJECTS_PER_SCENE
     )
+    source_view_fact: SourceViewFact | None = None
     source_capture_sha256: Sha256Digest
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_source_view_fact(
+        self,
+        handler: SerializerFunctionWrapHandler,
+    ) -> dict[str, object]:
+        payload = handler(self)
+        if self.source_view_fact is None:
+            payload.pop("source_view_fact", None)
+        return payload
 
     @model_validator(mode="after")
     def validate_capture(self) -> Self:
@@ -3343,6 +3495,76 @@ class CompetitionNativeSourceCaptureV2_9(CanonicalModel):
         )
         if position_keys != tuple(sorted(set(position_keys))):
             raise ValueError("captured reachable positions are not canonical")
+        if self.source_view_fact is not None:
+            fact = self.source_view_fact
+            camera = self.scene.camera_by_id("main")
+            if (
+                fact.source_id != self.source.source_id
+                or fact.scene_id != self.scene.scene_id
+                or fact.source_locator_sha256 != self.source.source_locator_sha256
+                or fact.runtime_identity_sha256
+                != canonical_sha256(
+                    self.runtime_identity,
+                    domain=_SOURCE_VIEW_BINDING_HASH_DOMAIN,
+                )
+                or fact.scene_sha256
+                != canonical_sha256(
+                    self.scene, domain=_SOURCE_VIEW_BINDING_HASH_DOMAIN
+                )
+                or fact.camera_sha256
+                != canonical_sha256(
+                    camera, domain=_SOURCE_VIEW_BINDING_HASH_DOMAIN
+                )
+                or fact.rgb_png_sha256 != self.rgb_png_sha256
+                or fact.depth_npy_sha256 != self.depth_npy_sha256
+                or fact.instance_png_sha256 != self.instance_png_sha256
+            ):
+                raise ValueError("source-view fact does not bind captured evidence")
+            if any(
+                view is not None and view.camera_id != "main"
+                for item in self.scene.objects
+                for view in (item.views.get("main"),)
+            ):
+                raise ValueError("source-view fact main view camera identity changed")
+            expected_object_ids = tuple(
+                sorted(
+                    item.object_id
+                    for item in self.scene.objects
+                    if (view := item.views.get("main")) is not None
+                    and view.visible_fraction > 0.0
+                )
+            )
+            fact_object_ids = tuple(item.object_id for item in fact.objects)
+            if fact_object_ids != expected_object_ids:
+                raise ValueError("source-view fact object roster does not bind main views")
+            for samples in fact.objects:
+                bbox = samples.source_mask_bbox
+                if bbox.xmax > camera.width or bbox.ymax > camera.height:
+                    raise ValueError("source-view fact bbox exceeds main camera bounds")
+                if any(
+                    row >= camera.height or column >= camera.width
+                    for row, column in zip(
+                        samples.sample_rows,
+                        samples.sample_columns,
+                        strict=True,
+                    )
+                ):
+                    raise ValueError("source-view fact samples exceed main camera bounds")
+                view = self.scene.object_by_id(samples.object_id).views["main"]
+                if any(
+                    not math.isclose(actual, expected, rel_tol=0.0, abs_tol=1e-6)
+                    for actual, expected in zip(
+                        (bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax),
+                        (
+                            view.bbox.xmin,
+                            view.bbox.ymin,
+                            view.bbox.xmax,
+                            view.bbox.ymax,
+                        ),
+                        strict=True,
+                    )
+                ):
+                    raise ValueError("source-view fact bbox does not bind its main view")
         capture_payload = _capture_payload(
             source=self.source,
             runtime_identity=self.runtime_identity,
@@ -3357,6 +3579,7 @@ class CompetitionNativeSourceCaptureV2_9(CanonicalModel):
             floor_envelope=self.floor_envelope,
             reachable_positions=self.reachable_positions,
             placement_facts=self.placement_facts,
+            source_view_fact=self.source_view_fact,
         )
         if (
             len(canonical_json_bytes(capture_payload))
@@ -3387,6 +3610,7 @@ def build_competition_native_source_capture_v2_9(
     floor_envelope: CompetitionNativeFloorEnvelopeV2_9 | None,
     reachable_positions: tuple[CompetitionNativePositionV2_9, ...],
     placement_facts: tuple[CompetitionNativeSubjectPlacementFactV2_9, ...],
+    source_view_fact: SourceViewFact | None = None,
 ) -> CompetitionNativeSourceCaptureV2_9:
     normalized_scene = normalize_competition_native_source_scene_v2_9(scene)
     support_facts = tuple(sorted(support_facts, key=lambda item: item.object_id))
@@ -3408,6 +3632,7 @@ def build_competition_native_source_capture_v2_9(
         floor_envelope=floor_envelope,
         reachable_positions=reachable_positions,
         placement_facts=placement_facts,
+        source_view_fact=source_view_fact,
     )
     return CompetitionNativeSourceCaptureV2_9(
         source=source,
@@ -3423,10 +3648,39 @@ def build_competition_native_source_capture_v2_9(
         floor_envelope=floor_envelope,
         reachable_positions=reachable_positions,
         placement_facts=placement_facts,
+        source_view_fact=source_view_fact,
         source_capture_sha256=canonical_sha256(
             payload, domain=_SOURCE_CAPTURE_HASH_DOMAIN
         ),
     )
+
+
+def competition_native_roster_selection_identity_v2_9(
+    capture: CompetitionNativeSourceCaptureV2_9,
+) -> Sha256Digest:
+    """Return the source identity used only for deterministic roster selection."""
+
+    if type(capture) is not CompetitionNativeSourceCaptureV2_9:
+        raise TypeError("roster selection identity requires an exact source capture")
+    if capture.source_view_fact is None:
+        return capture.source_capture_sha256
+    payload = _capture_payload(
+        source=capture.source,
+        runtime_identity=capture.runtime_identity,
+        scene=capture.scene,
+        rgb_png_sha256=capture.rgb_png_sha256,
+        depth_npy_sha256=capture.depth_npy_sha256,
+        instance_png_sha256=capture.instance_png_sha256,
+        pointcloud_ply_sha256=capture.pointcloud_ply_sha256,
+        is_scene_at_rest=capture.is_scene_at_rest,
+        settlement_pass_steps=capture.settlement_pass_steps,
+        support_facts=capture.support_facts,
+        floor_envelope=capture.floor_envelope,
+        reachable_positions=capture.reachable_positions,
+        placement_facts=capture.placement_facts,
+        source_view_fact=None,
+    )
+    return canonical_sha256(payload, domain=_SOURCE_CAPTURE_HASH_DOMAIN)
 
 
 class CompetitionNativeSourceCaptureOutcomeV2_9(CanonicalModel):
