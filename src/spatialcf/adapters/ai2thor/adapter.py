@@ -173,9 +173,13 @@ def _normalized_protocol_error(
     if isinstance(error, AdapterSettlementTimeout):
         return error
     origin = error.__cause__ if isinstance(error.__cause__, Exception) else error
-    if isinstance(origin, AI2ThorNativeReturnError):
+    if isinstance(error, AI2ThorNativeReturnError) or isinstance(
+        origin, AI2ThorNativeReturnError
+    ):
+        native_error = error if isinstance(error, AI2ThorNativeReturnError) else origin
+        assert isinstance(native_error, AI2ThorNativeReturnError)
         return AdapterReturnRejected(
-            f"{type(origin).__name__}:{' '.join(str(origin).split())}"
+            f"{type(native_error).__name__}:{' '.join(str(native_error).split())}"
         )
     event = adapter._latest_event
     metadata = getattr(event, "metadata", None)
@@ -281,6 +285,7 @@ def _apply_certified_edit_observed(
             ai2thor_spawn_map_from_adapter(application.spawn_map),
             x=subject.position.x + application.edit.translation_xy_m.x,
             y=subject.position.y + application.edit.translation_xy_m.y,
+            _defer_subject_pose_validation=True,
         )
         applied = applied_certified_edit_from_native(native, application=application)
     except AI2ThorSettlementTimeout as error:

@@ -682,6 +682,7 @@ class AI2ThorExecutionMixin:
         expected_positions: dict[str, Vec3],
         expected_rotations: dict[str, dict[str, float]],
         *,
+        deferred_pose_name: str | None = None,
         total_position_residual_limits_by_name: Mapping[str, float] | None = None,
         rotation_residual_limits_by_name: Mapping[str, float] | None = None,
     ) -> None:
@@ -699,6 +700,12 @@ class AI2ThorExecutionMixin:
             raise AI2ThorNativeReturnError(
                 "stable object names changed during pose application"
             )
+        if deferred_pose_name is not None and (
+            deferred_pose_name not in expected_by_name
+            or deferred_pose_name not in expected_positions
+            or deferred_pose_name not in expected_rotations
+        ):
+            raise ValueError("deferred pose name is not an expected stable object")
         for name in expected_by_name:
             metadata = by_name[name]
             try:
@@ -710,6 +717,18 @@ class AI2ThorExecutionMixin:
                 raise AI2ThorNativeReturnError(
                     f"object {name!r} returned an invalid pose"
                 ) from exc
+            if not all(
+                math.isfinite(value)
+                for value in (
+                    position.x,
+                    position.y,
+                    position.z,
+                    *native_rotation.values(),
+                )
+            ):
+                raise AI2ThorNativeReturnError(
+                    f"object {name!r} returned an invalid pose"
+                )
             expected_position = expected_positions[name]
             expected_rotation = expected_rotations[name]
             expected_coordinates = (
@@ -747,6 +766,8 @@ class AI2ThorExecutionMixin:
                     _OBJECT_ROTATION_TOLERANCE_DEGREES,
                 )
             )
+            if name == deferred_pose_name:
+                continue
             if not position_matches or not all(
                 self._angles_close(
                     native_rotation[axis],
@@ -960,6 +981,7 @@ class AI2ThorExecutionMixin:
         *,
         x: float,
         y: float,
+        _defer_subject_pose_validation: bool = False,
     ) -> AI2ThorPoseApplication:
         """Audit one exact world-XY endpoint without snapping or searching.
 
@@ -989,6 +1011,7 @@ class AI2ThorExecutionMixin:
                 y=next(iter(native_heights)),
                 z=endpoint_y,
             ),
+            deferred_pose_name=(subject.name if _defer_subject_pose_validation else None),
         )
 
     def apply_receptacle_endpoint_settled_observed(
@@ -1080,6 +1103,7 @@ class AI2ThorExecutionMixin:
         *,
         max_pass_steps: int | None = None,
         max_subject_rotation_residual_degrees: float | None = None,
+        deferred_pose_name: str | None = None,
     ) -> AI2ThorPoseApplication:
         controller = self._require_active()
         commanded_position = Vec3(
@@ -1129,6 +1153,7 @@ class AI2ThorExecutionMixin:
                 event,
                 expected_positions,
                 expected_rotations,
+                deferred_pose_name=deferred_pose_name,
             )
         else:
             immediate_native = self._scene_from_event(scene.scene_id, event)
