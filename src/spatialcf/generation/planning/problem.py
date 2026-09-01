@@ -1338,7 +1338,11 @@ def _runtime_collision_delegation_candidates(
     support_id = subject.support_object_id
     result = set()
     for native_id, obstacle in prepared.collision_proxies:
-        if native_id in {subject.object_id, support_id}:
+        if native_id in {
+            subject.object_id,
+            support_id,
+            prepared.intervention.reference_id,
+        }:
             continue
         if _conservative_source_overlap(subject.obb, obstacle):
             result.add(native_id)
