@@ -9,6 +9,7 @@ from pydantic import model_validator
 
 from spatialcf.adapters.base import (
     AdapterCameraApplication,
+    AdapterObservation,
     AdapterOperationError,
     AdapterPose,
     AdapterPosition,
@@ -19,6 +20,7 @@ from spatialcf.adapters.base import (
     CapturedSource,
     CaptureRequest,
     EnvironmentAdapter,
+    InstanceEvidenceProvenance,
     SourceCaptureFacts,
     SourceCaptureOptions,
 )
@@ -63,6 +65,10 @@ from spatialcf.generation.capture.models import (
 )
 from spatialcf.generation.capture.plan import CapturePlan, CaptureSettings
 from spatialcf.generation.capture.storage import publish_roster
+from spatialcf.generation.capture.visual_evidence import (
+    SourceViewFactError,
+    build_source_view_fact,
+)
 
 _PROCTHOR_DATASET_ID = "allenai/procthor-10k"
 _PROCTHOR_DATASET_NAME = "procthor-10k"
@@ -350,6 +356,69 @@ def _capture_selected_camera_source(
     runtime_identity = CompetitionNativeRuntimeIdentityV2_9(
         **asdict(facts.runtime_identity)
     )
+    raw_observation = application.observation
+    source_view_fact = None
+    if (
+        raw_observation.scene != application.observed_scene
+        or application.observed_scene != scene
+    ):
+        return (
+            _rejected_source(source, "source_capture:source_view_fact_invalid"),
+            (),
+        )
+    try:
+        observation = AdapterObservation.create(
+            scene=normalized_scene,
+            rgb_png=raw_observation.rgb_png,
+            depth_npy=raw_observation.depth_npy,
+            instance_png=raw_observation.instance_png,
+            pointcloud_ply=raw_observation.pointcloud_ply,
+            instance_pixel_counts=raw_observation.instance_pixel_counts,
+            instance_colors=raw_observation.instance_colors,
+            instance_evidence_provenance=(
+                raw_observation.instance_evidence_provenance
+            ),
+            is_settled=raw_observation.is_settled,
+        )
+    except (TypeError, ValueError):
+        return (
+            _rejected_source(source, "source_capture:source_view_fact_invalid"),
+            (),
+        )
+    if (
+        observation.rgb_png_sha256 != raw_observation.rgb_png_sha256
+        or observation.depth_npy_sha256 != raw_observation.depth_npy_sha256
+        or observation.instance_png_sha256 != raw_observation.instance_png_sha256
+        or observation.pointcloud_ply_sha256 != raw_observation.pointcloud_ply_sha256
+    ):
+        return (
+            _rejected_source(source, "source_capture:source_view_fact_invalid"),
+            (),
+        )
+    if (
+        observation.instance_evidence_provenance
+        is InstanceEvidenceProvenance.SAME_EVENT_INSTANCE_SEGMENTATION
+    ):
+        try:
+            source_view_fact = build_source_view_fact(
+                source,
+                runtime_identity,
+                normalized_scene,
+                observation,
+            )
+        except (SourceViewFactError, TypeError, ValueError):
+            return (
+                _rejected_source(source, "source_capture:source_view_fact_invalid"),
+                (),
+            )
+    elif (
+        observation.instance_evidence_provenance
+        is not InstanceEvidenceProvenance.LEGACY_NEUTRAL
+    ):
+        return (
+            _rejected_source(source, "source_capture:source_view_fact_invalid"),
+            (),
+        )
     floor = None
     floor_reason = None
     floor_subjects = tuple(
@@ -498,11 +567,11 @@ def _capture_selected_camera_source(
             source=source,
             runtime_identity=runtime_identity,
             scene=normalized_scene,
-            rgb_png_sha256=application.observation.rgb_png_sha256,
-            depth_npy_sha256=application.observation.depth_npy_sha256,
-            instance_png_sha256=application.observation.instance_png_sha256,
-            pointcloud_ply_sha256=application.observation.pointcloud_ply_sha256,
-            is_scene_at_rest=application.observation.is_settled,
+            rgb_png_sha256=observation.rgb_png_sha256,
+            depth_npy_sha256=observation.depth_npy_sha256,
+            instance_png_sha256=observation.instance_png_sha256,
+            pointcloud_ply_sha256=observation.pointcloud_ply_sha256,
+            is_scene_at_rest=observation.is_settled,
             settlement_pass_steps=settlement_pass_steps,
             support_facts=support_facts,
             floor_envelope=floor,
@@ -510,6 +579,7 @@ def _capture_selected_camera_source(
             placement_facts=tuple(
                 placement_by_id[item.object_id] for item in normalized_scene.objects
             ),
+            source_view_fact=source_view_fact,
         )
     except (TypeError, ValueError):
         return _rejected_source(source, "source_capture:normalized_capture_invalid"), ()

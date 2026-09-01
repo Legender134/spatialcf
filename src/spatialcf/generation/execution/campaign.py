@@ -168,8 +168,12 @@ def _batch_lineage(
             placement_sha256=outcome.placement_sha256,
             surface_evidence_sha256=outcome.surface_evidence_sha256,
             subject_surface_evidence_sha256=(outcome.subject_surface_evidence_sha256),
+            semantic_problem_sha256=outcome.semantic_problem_sha256,
             proxy_bundle_sha256=outcome.proxy_bundle_sha256,
             solve_result_sha256=outcome.solve_result_sha256,
+            selected_edit_sha256=outcome.selected_edit_sha256,
+            source_view_fact_sha256=outcome.source_view_fact_sha256,
+            source_view_guard=outcome.source_view_guard,
             runtime_collision_delegated_native_object_ids=(
                 outcome.runtime_collision_delegated_native_object_ids
             ),

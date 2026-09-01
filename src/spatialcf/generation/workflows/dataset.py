@@ -85,6 +85,33 @@ _MAX_METADATA_BYTES = 64 * 1024 * 1024
 _MAX_ASSET_BYTES = 512 * 1024 * 1024
 
 
+class SourcePlanIncompleteError(RuntimeError):
+    """The persisted current source plan cannot enter native execution."""
+
+
+def _require_complete_source_plan(plan: planning.SourcePlan) -> None:
+    if type(plan) is not planning.SourcePlan:
+        raise TypeError("dataset source plan must be exact")
+    request_ids = tuple(item.request_id for item in plan.roster_manifest.requests)
+    outcome_ids = tuple(item.request_id for item in plan.request_outcomes)
+    if outcome_ids != request_ids or len(set(outcome_ids)) != len(outcome_ids):
+        raise SourcePlanIncompleteError(
+            "dataset source plan is incomplete:planned=0:"
+            f"rejected={len(request_ids)}:"
+            "reasons=source_plan:request_outcomes_not_closed"
+        )
+    rejected = tuple(
+        item for item in plan.request_outcomes if item.status != "planned"
+    )
+    if rejected:
+        reasons = tuple(sorted({reason for item in rejected for reason in item.reasons}))
+        raise SourcePlanIncompleteError(
+            "dataset source plan is incomplete:"
+            f"planned={len(plan.request_outcomes) - len(rejected)}:"
+            f"rejected={len(rejected)}:reasons={','.join(reasons)}"
+        )
+
+
 def _config_sha256(config: GenerationConfig) -> Sha256Digest:
     return canonical_sha256(
         config.model_dump(mode="json", warnings="error"),
@@ -295,6 +322,7 @@ def _run_batches(
     adapter_factory: Callable[..., AI2ThorAdapter],
     fresh_transitions: _FreshTransitions | None = None,
 ) -> execution.SourceExecutionSummary:
+    _require_complete_source_plan(plan)
     _ensure_batches_root(root)
 
     class _FreshAuditRunner:
@@ -1531,6 +1559,7 @@ def generate_dataset(
         root / ".spatialcf" / "source-plan",
         fresh_transitions=fresh_transitions,
     )
+    _require_complete_source_plan(source_plan)
     execution_summary = _run_batches(
         source_plan,
         root / ".spatialcf" / "batches",

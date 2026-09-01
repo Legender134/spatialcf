@@ -23,6 +23,7 @@ from spatialcf.adapters.base import (
     AppliedCertifiedEdit,
     CapturedSource,
     CertifiedEditApplication,
+    InstanceEvidenceProvenance,
     SettledReadback,
 )
 from spatialcf.domain.scene import (
@@ -613,6 +614,7 @@ class AI2ThorObservation:
     pointcloud_ply_sha256: str
     instance_pixel_counts: Mapping[str, int]
     is_scene_at_rest: bool
+    instance_colors: tuple[tuple[str, tuple[int, int, int]], ...]
 
     @classmethod
     def create(
@@ -625,6 +627,7 @@ class AI2ThorObservation:
         pointcloud_ply: bytes,
         instance_pixel_counts: Mapping[str, int],
         is_scene_at_rest: bool,
+        instance_colors: tuple[tuple[str, tuple[int, int, int]], ...],
     ) -> AI2ThorObservation:
         return cls(
             scene=scene,
@@ -640,7 +643,53 @@ class AI2ThorObservation:
                 dict(sorted(instance_pixel_counts.items()))
             ),
             is_scene_at_rest=is_scene_at_rest,
+            instance_colors=tuple(
+                (object_id, tuple(color)) for object_id, color in instance_colors
+            ),
         )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.instance_pixel_counts, Mapping) or any(
+            type(object_id) is not str
+            or type(count) is not int
+            or count < 0
+            for object_id, count in self.instance_pixel_counts.items()
+        ):
+            raise TypeError("AI2-THOR instance pixel counts must be exact")
+        if set(self.instance_pixel_counts) != {
+            obj.object_id for obj in self.scene.objects
+        }:
+            raise ValueError(
+                "AI2-THOR instance pixel counts must cover every scene object"
+            )
+        if type(self.instance_colors) is not tuple or any(
+            type(item) is not tuple
+            or len(item) != 2
+            or type(item[0]) is not str
+            or type(item[1]) is not tuple
+            or len(item[1]) != 3
+            or any(
+                type(channel) is not int or not 0 <= channel <= 255
+                for channel in item[1]
+            )
+            for item in self.instance_colors
+        ):
+            raise TypeError("AI2-THOR instance colors must be exact RGB pairs")
+        if (
+            self.instance_colors != tuple(sorted(self.instance_colors))
+            or len({item[0] for item in self.instance_colors})
+            != len(self.instance_colors)
+            or len({item[1] for item in self.instance_colors})
+            != len(self.instance_colors)
+        ):
+            raise ValueError("AI2-THOR instance colors must be sorted and unique")
+        positive_ids = {
+            object_id
+            for object_id, count in self.instance_pixel_counts.items()
+            if count > 0
+        }
+        if {item[0] for item in self.instance_colors} != positive_ids:
+            raise ValueError("AI2-THOR instance colors must cover positive pixels")
 
 
 @dataclass(frozen=True)
@@ -1014,6 +1063,10 @@ def adapter_observation_from_native(value: AI2ThorObservation) -> AdapterObserva
         pointcloud_ply=value.pointcloud_ply,
         instance_pixel_counts=tuple(sorted(value.instance_pixel_counts.items())),
         is_settled=value.is_scene_at_rest,
+        instance_colors=value.instance_colors,
+        instance_evidence_provenance=(
+            InstanceEvidenceProvenance.SAME_EVENT_INSTANCE_SEGMENTATION
+        ),
     )
 
 

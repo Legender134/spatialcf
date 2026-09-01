@@ -63,6 +63,7 @@ from spatialcf.generation.planning.models import (
     EndpointPlan,
     EndpointWorkspace,
     ProxyBundle,
+    SourceViewGuard,
     SubjectPlacementFact,
 )
 from spatialcf.generation.planning.problem import (
@@ -70,6 +71,7 @@ from spatialcf.generation.planning.problem import (
     default_planning_workspace,
     default_solver_config,
 )
+from spatialcf.generation.planning.view_guard import evaluate_source_view_guard
 from spatialcf.verification.filesystem import (
     CompetitionNativePublicationError,
     DirectoryIdentity,
@@ -85,7 +87,7 @@ from spatialcf.verification.filesystem import (
 from spatialcf.verification.integrity import competition_legacy_sha256
 
 _POLICY_DOMAIN = "spatialcf.competition-native-source-policy.v2.9.13"
-_PLAN_DOMAIN = "spatialcf.competition-native-source-plan.v2.9.9"
+_PLAN_DOMAIN = "spatialcf.competition-native-source-plan.v2.9.10"
 _TARGET_LEDGER_DOMAIN = (
     "spatialcf.competition-native-source-target-reachability-ledger.v2.9.8"
 )
@@ -95,7 +97,7 @@ _ACCEPTED_ROSTER_DOMAIN = (
 )
 _RUNTIME_POSE_POLICY_DOMAIN = "spatialcf.competition-native-runtime-pose-policy.v2.9.5"
 _SOURCE_POLICY_VERSION = "competition-native-source-policy:2.9.13"
-_SOURCE_PLAN_VERSION = "competition-native-source-plan:2.9.9"
+_SOURCE_PLAN_VERSION = "competition-native-source-plan:2.9.10"
 _FILES = {"plan.json", "checksums.sha256"}
 _MAX_PLAN_BYTES = 256 * 1024 * 1024
 _MAX_POLICY_BYTES = 16 * 1024 * 1024
@@ -256,6 +258,9 @@ class SourceRequestOutcome(CanonicalModel):
     attempted_workspace_count: int | None = Field(default=None, strict=True, gt=0)
     candidate_point_count: int | None = Field(default=None, strict=True, gt=0)
     solve_result_sha256: Sha256Digest | None
+    selected_edit_sha256: Sha256Digest | None = None
+    source_view_fact_sha256: Sha256Digest | None = None
+    source_view_guard: SourceViewGuard | None = None
     reasons: tuple[str, ...] = Field(max_length=32)
     surface_evidence_sha256: Sha256Digest | None = None
     subject_surface_evidence_sha256: Sha256Digest | None = None
@@ -281,6 +286,9 @@ class SourceRequestOutcome(CanonicalModel):
             self.attempted_workspace_count,
             self.candidate_point_count,
             self.solve_result_sha256,
+            self.selected_edit_sha256,
+            self.source_view_fact_sha256,
+            self.source_view_guard,
         )
         if self.status == "planned":
             if any(item is None for item in metrics) or self.reasons:
@@ -305,6 +313,17 @@ class SourceRequestOutcome(CanonicalModel):
         if self.status == "planned":
             if any(item is None for item in lineage):
                 raise ValueError("planned patch-bound lineage is not closed")
+            if (
+                self.source_view_guard.status != "PASSED"
+                or self.source_view_guard.source_view_fact_sha256
+                != self.source_view_fact_sha256
+                or self.source_view_guard.semantic_problem_sha256
+                != self.semantic_problem_sha256
+                or self.source_view_guard.solve_result_sha256
+                != self.solve_result_sha256
+                or self.source_view_guard.edit_sha256 != self.selected_edit_sha256
+            ):
+                raise ValueError("planned source-view guard lineage is not closed")
         elif any(item is not None for item in lineage):
             raise ValueError("rejected patch-bound lineage must be empty")
         return self
@@ -446,14 +465,14 @@ def _workspace_is_subset(inner: EndpointWorkspace, outer: EndpointWorkspace) -> 
     )
 
 
-def _fresh_solve_matches(
+def _fresh_solve_result(
     proxy: ProxyBundle,
     config: ContinuousYawSolverConfigV2_9,
     expected_solve_result_sha256: Sha256Digest,
-) -> bool:
+) -> ContinuousYawCertifiedSuccessResultV2_9 | None:
     solved = solve_minimum_cost(proxy.semantic_problem, config)
     result = solved.result
-    return bool(
+    if (
         type(result) is ContinuousYawCertifiedSuccessResultV2_9
         and result.semantic_problem_sha256
         == proxy.semantic_problem.semantic_problem_sha256
@@ -461,7 +480,9 @@ def _fresh_solve_matches(
         and result.solver_config == config
         and result.solver_config.config_sha256 == config.config_sha256
         and result.solve_result_sha256 == expected_solve_result_sha256
-    )
+    ):
+        return result
+    return None
 
 
 class SourcePlan(CanonicalModel):
@@ -729,6 +750,9 @@ class SourcePlan(CanonicalModel):
                 or outcome.patch_index >= len(subject_evidence.patches)
                 or outcome.patch_sha256
                 != subject_evidence.patches[outcome.patch_index].patch_sha256
+                or capture.source_view_fact is None
+                or outcome.source_view_fact_sha256
+                != capture.source_view_fact.source_view_fact_sha256
             ):
                 raise ValueError("planned patch-bound evidence lineage changed")
             endpoint = EndpointPlan(
@@ -745,8 +769,12 @@ class SourcePlan(CanonicalModel):
                 subject_surface_evidence_sha256=(
                     outcome.subject_surface_evidence_sha256
                 ),
+                semantic_problem_sha256=outcome.semantic_problem_sha256,
                 proxy_bundle_sha256=outcome.proxy_bundle_sha256,
                 solve_result_sha256=outcome.solve_result_sha256,
+                selected_edit_sha256=outcome.selected_edit_sha256,
+                source_view_fact_sha256=outcome.source_view_fact_sha256,
+                source_view_guard=outcome.source_view_guard,
                 runtime_collision_delegated_native_object_ids=(
                     outcome.runtime_collision_delegated_native_object_ids
                 ),
@@ -781,10 +809,26 @@ class SourcePlan(CanonicalModel):
                 != proxy.binding.runtime_collision_delegated_native_object_ids
             ):
                 raise ValueError("planned patch-bound proxy lineage changed")
-            if not _fresh_solve_matches(
+            fresh_result = _fresh_solve_result(
                 proxy, self.source_policy.solver_config, outcome.solve_result_sha256
-            ):
+            )
+            if fresh_result is None:
                 raise ValueError("planned patch-bound fresh solve lineage changed")
+            if (
+                outcome.selected_edit_sha256
+                != fresh_result.selected_witness.edit.edit_sha256
+            ):
+                raise ValueError("planned selected edit lineage changed")
+            replayed_guard = evaluate_source_view_guard(
+                capture.scene,
+                intervention,
+                capture.source_view_fact,
+                fresh_result.selected_witness.edit,
+                semantic_problem_sha256=proxy.semantic_problem.semantic_problem_sha256,
+                solve_result_sha256=fresh_result.solve_result_sha256,
+            )
+            if replayed_guard != outcome.source_view_guard:
+                raise ValueError("planned source-view guard replay changed")
         return self
 
     @model_validator(mode="after")
@@ -944,6 +988,11 @@ def build_default_source_policy(compilation: RosterCompilation) -> SourcePolicy:
 
 
 def _endpoint_rejection_reason(reason: str) -> str:
+    if reason in {
+        "endpoint_plan:SOURCE_VIEW_MISSING",
+        "endpoint_plan:SOURCE_VIEW_UNCERTIFIED",
+    }:
+        return reason
     candidate = f"source_plan:endpoint:{reason}"
     if len(candidate) <= _MAX_REASON_CHARS:
         return candidate
@@ -998,6 +1047,9 @@ def _rejected_outcome(
         attempted_workspace_count=None,
         candidate_point_count=None,
         solve_result_sha256=None,
+        selected_edit_sha256=None,
+        source_view_fact_sha256=None,
+        source_view_guard=None,
         reasons=tuple(sorted(set(reasons))),
     )
 
@@ -1022,6 +1074,8 @@ def _preflight_request(
     case_id: str,
 ) -> str | None:
     _endpoint_policy_controls(policy)
+    if capture.source_view_fact is None:
+        return "endpoint_plan:SOURCE_VIEW_MISSING"
     runtime = capture.runtime_identity
     if runtime.native_scene_name == "Procedural":
         return "source_plan:procedural_native_audit_unsupported"
@@ -1106,13 +1160,22 @@ def _prepare_job(
     camera_evidence_sha256: Sha256Digest,
 ) -> _PlanningJob | SourceRequestOutcome:
     case_id = _case_id(policy, request)
-    verified_evidence = verify_source_surface_evidence(capture, source_surface_evidence)
     placements = tuple(
         item for item in capture.placement_facts if item.object_id == request.subject_id
     )
     if len(placements) != 1:
         raise ValueError("fresh roster selected a non-unique placement fact")
     placement_fact = placements[0]
+    if capture.source_view_fact is None:
+        return _rejected_outcome(
+            request,
+            slot,
+            case_id,
+            "endpoint_plan:SOURCE_VIEW_MISSING",
+            capture=capture,
+            placement=placement_fact,
+        )
+    verified_evidence = verify_source_surface_evidence(capture, source_surface_evidence)
     subjects = tuple(
         item
         for item in verified_evidence.subjects
@@ -1185,7 +1248,7 @@ def _prepare_job(
 
 def _endpoint_worker(connection: Connection, arguments: tuple[object, ...]) -> None:
     try:
-        if len(arguments) != 11:
+        if len(arguments) != 12:
             connection.send(("error", "InvalidWorkerArguments"))
             return
         (
@@ -1195,6 +1258,7 @@ def _endpoint_worker(connection: Connection, arguments: tuple[object, ...]) -> N
             config,
             source_surface_evidence,
             subject_surface_evidence,
+            source_view_fact,
             placement,
             case_id,
             max_candidate_points,
@@ -1209,6 +1273,7 @@ def _endpoint_worker(connection: Connection, arguments: tuple[object, ...]) -> N
                 config,
                 source_surface_evidence,
                 subject_surface_evidence,
+                source_view_fact,
                 placement=placement,
                 case_id=case_id,
                 max_candidate_points=max_candidate_points,
@@ -1235,6 +1300,7 @@ def _bounded_default_endpoint_plan(
         policy.solver_config,
         job.source_surface_evidence,
         job.subject_surface_evidence,
+        job.capture.source_view_fact,
         job.placement,
         job.case_id,
         job.max_candidate_points,
@@ -1313,6 +1379,7 @@ def _run_job(
                 policy.solver_config,
                 job.source_surface_evidence,
                 job.subject_surface_evidence,
+                job.capture.source_view_fact,
                 placement=job.placement,
                 case_id=job.case_id,
                 max_candidate_points=job.max_candidate_points,
@@ -1364,6 +1431,12 @@ def _run_job(
         or endpoint.candidate_point_count > policy.max_endpoint_candidate_points
         or endpoint.attempted_workspace_count > 4 * endpoint.candidate_point_count
         or endpoint.source_capture_sha256 != job.capture.source_capture_sha256
+        or job.capture.source_view_fact is None
+        or endpoint.source_view_fact_sha256
+        != job.capture.source_view_fact.source_view_fact_sha256
+        or endpoint.semantic_problem_sha256
+        != endpoint.source_view_guard.semantic_problem_sha256
+        or endpoint.selected_edit_sha256 != endpoint.source_view_guard.edit_sha256
         or endpoint.placement_sha256 != job.placement_fact.placement_sha256
         or endpoint.surface_evidence_sha256
         != job.source_surface_evidence.surface_evidence_sha256
@@ -1431,14 +1504,46 @@ def _run_job(
             capture=job.capture,
             placement=job.placement_fact,
         )
-    if not _fresh_solve_matches(
+    fresh_result = _fresh_solve_result(
         proxy, policy.solver_config, endpoint.solve_result_sha256
-    ):
+    )
+    if fresh_result is None:
         return _rejected_outcome(
             request,
             job.slot,
             job.case_id,
             "source_plan:endpoint_solve_mismatch",
+            capture=job.capture,
+            placement=job.placement_fact,
+        )
+    if (
+        endpoint.semantic_problem_sha256
+        != proxy.semantic_problem.semantic_problem_sha256
+        or endpoint.selected_edit_sha256
+        != fresh_result.selected_witness.edit.edit_sha256
+    ):
+        return _rejected_outcome(
+            request,
+            job.slot,
+            job.case_id,
+            "source_plan:endpoint_identity_mismatch",
+            capture=job.capture,
+            placement=job.placement_fact,
+        )
+    replayed_guard = evaluate_source_view_guard(
+        job.scene,
+        job.intervention,
+        job.capture.source_view_fact,
+        fresh_result.selected_witness.edit,
+        semantic_problem_sha256=proxy.semantic_problem.semantic_problem_sha256,
+        solve_result_sha256=fresh_result.solve_result_sha256,
+    )
+    if replayed_guard != endpoint.source_view_guard:
+        return _rejected_outcome(
+            request,
+            job.slot,
+            job.case_id,
+            "source_plan:endpoint_guard_mismatch",
             capture=job.capture,
             placement=job.placement_fact,
         )
@@ -1490,6 +1595,9 @@ def _run_job(
         attempted_workspace_count=endpoint.attempted_workspace_count,
         candidate_point_count=endpoint.candidate_point_count,
         solve_result_sha256=endpoint.solve_result_sha256,
+        selected_edit_sha256=endpoint.selected_edit_sha256,
+        source_view_fact_sha256=endpoint.source_view_fact_sha256,
+        source_view_guard=endpoint.source_view_guard,
         reasons=(),
         surface_evidence_sha256=(job.source_surface_evidence.surface_evidence_sha256),
         subject_surface_evidence_sha256=(

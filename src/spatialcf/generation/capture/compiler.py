@@ -50,6 +50,7 @@ from spatialcf.generation.capture.models import (
     SourceSurfaceEvidence,
     build_competition_native_camera_pose_bank_v2_9_3,
     competition_native_camera_pose_bank_sha256_v2_9_3,
+    competition_native_roster_selection_identity_v2_9,
     score_competition_native_camera_scene_v2_9_3,
     score_competition_native_editable_camera_scene_v2_9_4,
     select_competition_native_camera_score_index_v2_9_3,
@@ -276,7 +277,9 @@ def _candidate_identity(
         "reference_id": reference_id,
         "relation_before": relation.value,
         "scene_id": source.scene_id,
-        "source_capture_sha256": capture.source_capture_sha256,
+        "source_capture_sha256": competition_native_roster_selection_identity_v2_9(
+            capture
+        ),
         "source_id": source.source_id,
         "split": source.split,
         "subject_id": subject_id,
