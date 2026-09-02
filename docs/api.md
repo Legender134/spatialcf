@@ -2,6 +2,18 @@
 
 The supported version-free API is exported from `spatialcf.generation`.
 
+## Advanced planar-translate compatibility
+
+Public `main` also carries the advanced
+`spatialcf/planar_translate@2` compatibility embedding. It maps sealed v2
+planar-translate inputs into the general contract. Its compatibility backend
+`spatialcf.core.planar_backend.PlanarTranslateBackend` delegates exactly once to
+existing `spatialcf.core.solver.solve_minimum_cost` and does not call the
+verifier. Existing v2 result/certificate verification remains entirely owned by
+the existing verifier. This is not a second solver or verifier, and it does not
+add a generation entry point or change the supported `spatialcf.generation` API
+above.
+
 ## Generate
 
 ```python

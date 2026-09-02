@@ -18,6 +18,15 @@ visibility, and target-relation constraints. It chooses a deterministic
 minimum-cost edit from that domain. Labels are derived from geometry and
 independent verification, not supplied by the Adapter.
 
+## Advanced planar compatibility boundary
+
+`spatialcf/planar_translate@2` is an additive compatibility embedding for
+sealed current Canonical v2 inputs. It maps those inputs into general
+counterfactual contracts, then its thin backend delegates to the one existing v2
+solver owner. Existing v2 result and certificate verification remains at the
+existing verifier boundary. This is not a second solver or verifier, and it does
+not add a generation path or change the supported generation API.
+
 ## Adapter
 
 An Adapter loads and normalizes source scenes, captures observations, reports

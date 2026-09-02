@@ -8,12 +8,28 @@ The Schema, solver, and verification logic are platform-neutral. Unity/AI2-THOR
 is the first Adapter and connects platform facts and native operations to the
 public generation chain.
 
+## Current `main` status
+
+The stable generation chain is unchanged. Current public `main` includes the
+advanced `spatialcf/planar_translate@2` compatibility embedding: it maps sealed
+v2 inputs into general contracts. Its compatibility backend
+`spatialcf.core.planar_backend.PlanarTranslateBackend` delegates exactly once to
+the existing `spatialcf.core.solver.solve_minimum_cost` and does not call the
+verifier. Existing v2 result/certificate verification remains entirely owned by
+the existing verifier owner. It is not a second solver or verifier, and it does
+not create a new generation route.
+
+Current public `main` is distinct from the latest annotated release tag:
+`v0.1.1` remains the latest annotated release tag and `v0.2.0` has not been
+released. The quick start below therefore continues to use the exact `v0.1.1`
+tag.
+
 ## Repository and release
 
 The authoritative user-facing repository is
 [`Legender134/spatialcf`](https://github.com/Legender134/spatialcf). `v0.1.1`
-is a GitHub release, not a PyPI publication. Clone that release tag and install
-from the local checkout.
+is the latest annotated release tag. It is not a PyPI publication and is not a
+GitHub Release. Clone that tag and install from the local checkout.
 
 Public releases come from a verified deterministic snapshot. Complete
 development history, private release manifests, and recovery evidence stay in
