@@ -7,11 +7,26 @@ SpatialCF 用于生成经过验证的空间反事实数据集。当前链路：d
 Schema、求解器和验证逻辑均为平台无关设计。Unity/AI2-THOR 是首个 Adapter，只负责把
 平台事实和原生操作连接到这条公共生成链。
 
+## 当前 main 状态
+
+稳定 generation chain 保持不变。当前 public main 已包含 advanced
+`spatialcf/planar_translate@2` compatibility embedding：它把 sealed v2 inputs 映射进
+general contracts；compatibility backend
+`spatialcf.core.planar_backend.PlanarTranslateBackend` 恰好一次调用既有
+`spatialcf.core.solver.solve_minimum_cost`，且不调用 verifier。旧 v2 result/certificate
+验证仍完全属于既有 verifier owner。它不是第二个 solver/verifier，也不是新的 generation
+route。
+
+当前 public main 与最新 annotated release tag 不同：`v0.1.1` 仍是最新 annotated release
+tag，尚未发布 `v0.2.0`。
+下方 quickstart 因此继续精确使用 `v0.1.1`。
+
 ## 仓库与发布
 
 面向用户的权威仓库是
-[`Legender134/spatialcf`](https://github.com/Legender134/spatialcf)。`v0.1.1` 是 GitHub
-release，不是 PyPI 发布；请从该 release tag 克隆并在本地 checkout 中安装。
+[`Legender134/spatialcf`](https://github.com/Legender134/spatialcf)。`v0.1.1` 是最新
+annotated release tag，不是 PyPI 发布，也不应称为 GitHub Release；请从该 tag 克隆并在本地
+checkout 中安装。
 
 公共发布内容来自经过校验的确定性快照。完整开发历史、私有发布清单和恢复证据不会进入
 用户仓库；它们由维护者在独立的私有开发与归档边界中保管。
