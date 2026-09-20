@@ -36,8 +36,12 @@ from spatialcf.domain.operators import (
     WriteAuthority,
 )
 from spatialcf.domain.outcomes import (
+    BackendCompleteUnsatEvidence,
     BackendProposal,
+    BackendProposalSubmission,
     BackendSelectionRecord,
+    BackendSubmission,
+    BackendUnknownEvidence,
     CapabilityMatch,
     CapabilityMismatch,
     CertifiedSolutionCertificate,
@@ -4185,3 +4189,167 @@ class StaticImplementationRegistry:
             ):
                 raise SemanticContractError("certificate roots")
         return result
+
+    def validate_submission_contract(
+        self,
+        *,
+        submission: BackendSubmission,
+        outcome_contract_arguments: dict[str, object],
+    ) -> (
+        CertifiedSolutionResult
+        | ProvenUnsatResult
+        | NoncertifiedWitnessResult
+        | UnknownResult
+    ):
+        """Validate one M3 V2 submission without changing the retained API.
+
+        Proposal wrappers add no semantics: after exact wrapper binding they
+        delegate verbatim to :meth:`validate_outcome_contract`.  Program-free
+        terminal evidence is checked only for its additive structural roots;
+        terminal assembly remains the sole owner of certificates and results.
+        """
+
+        if type(submission) is BackendProposalSubmission:
+            proposal = outcome_contract_arguments.get("proposal")
+            if (
+                proposal is None
+                or canonical_json_bytes(proposal)
+                != canonical_json_bytes(submission.proposal)
+                or submission.backend_proposal_sha256
+                != submission.proposal.backend_proposal_sha256
+            ):
+                raise SemanticContractError("proposal submission wrapper")
+            return self.validate_outcome_contract(**outcome_contract_arguments)  # type: ignore[arg-type]
+
+        if type(submission) not in (
+            BackendCompleteUnsatEvidence,
+            BackendUnknownEvidence,
+        ):
+            raise SemanticContractError("submission branch")
+        selection = outcome_contract_arguments.get("selection")
+        result = outcome_contract_arguments.get("result")
+        if type(selection) is not BackendSelectionRecord:
+            raise SemanticContractError("submission selection")
+        if type(result) not in (ProvenUnsatResult, UnknownResult):
+            raise SemanticContractError("terminal submission result")
+        if (
+            submission.backend_selection_record_sha256
+            != selection.backend_selection_record_sha256
+            or result.backend_selection_record_sha256
+            != selection.backend_selection_record_sha256
+            or submission.proof_material_sha256
+            != submission.proof_material.proof_material_sha256
+            or canonical_json_bytes(submission.resource_usage)
+            != canonical_json_bytes(result.resource_usage)
+        ):
+            raise SemanticContractError("terminal submission roots")
+        if type(submission) is BackendCompleteUnsatEvidence:
+            if (
+                type(result) is not ProvenUnsatResult
+                or result.complete_domain_coverage_artifact_sha256
+                != submission.complete_domain_coverage_artifact_sha256
+            ):
+                raise SemanticContractError("complete-domain submission")
+        elif type(result) is not UnknownResult:
+            raise SemanticContractError("unknown submission")
+        return result
+
+
+def validate_submission_contract_structure(
+    *,
+    submission: BackendSubmission,
+    selection: BackendSelectionRecord,
+    checked_proof_outcome: CheckedProofOutcome,
+    verifier_dispatch_record: VerifierDispatchRecord,
+    result: (
+        CertifiedSolutionResult
+        | ProvenUnsatResult
+        | NoncertifiedWitnessResult
+        | UnknownResult
+    ),
+) -> None:
+    """Close the M3 submission-to-assembled-record hash DAG without execution.
+
+    This is the dispatch-time half of the additive submission validator.  The
+    retained instance method above remains the sole full M1 proposal-contract
+    validator; its exact signature and behavior are intentionally unchanged.
+    """
+
+    if type(checked_proof_outcome) is not CheckedProofOutcome:
+        raise TypeError("submission structure requires a typed checked outcome")
+    if type(verifier_dispatch_record) is not VerifierDispatchRecord:
+        raise TypeError("submission structure requires a typed checker dispatch")
+    if (
+        verifier_dispatch_record.checked_proof_outcome_sha256
+        != checked_proof_outcome.checked_proof_outcome_sha256
+        or verifier_dispatch_record.checker_capability_ref
+        != checked_proof_outcome.checker_capability_ref
+        or verifier_dispatch_record.checker_build_sha256
+        != checked_proof_outcome.checker_build_sha256
+    ):
+        raise SemanticContractError("checker dispatch does not bind checked outcome")
+    if (
+        selection.selection_disposition != "SELECTED"
+        or result.backend_selection_record_sha256
+        != selection.backend_selection_record_sha256
+        or result.checked_proof_outcome_sha256
+        != checked_proof_outcome.checked_proof_outcome_sha256
+        or result.verifier_dispatch_record_sha256
+        != verifier_dispatch_record.verifier_dispatch_record_sha256
+        or result.checker_disposition != checked_proof_outcome.checker_disposition
+    ):
+        raise SemanticContractError("assembled submission roots")
+    evidence = (
+        submission.proposal
+        if type(submission) is BackendProposalSubmission
+        else submission
+    )
+    if (
+        evidence.backend_selection_record_sha256
+        != selection.backend_selection_record_sha256
+        or evidence.proof_material_sha256 != checked_proof_outcome.proof_material_sha256
+        or evidence.proposal_backend_owner_ref
+        != verifier_dispatch_record.proposal_backend_owner_ref
+        or evidence.proposal_backend_capability_ref
+        != verifier_dispatch_record.proposal_backend_capability_ref
+        or evidence.proposal_backend_build_sha256
+        != verifier_dispatch_record.proposal_backend_build_sha256
+    ):
+        raise SemanticContractError("assembled submission evidence")
+    if type(submission) is BackendCompleteUnsatEvidence and (
+        type(result) is not ProvenUnsatResult
+        or result.complete_domain_coverage_artifact_sha256
+        != submission.complete_domain_coverage_artifact_sha256
+    ):
+        raise SemanticContractError("assembled complete-domain evidence")
+    if type(submission) is BackendUnknownEvidence and type(result) is not UnknownResult:
+        raise SemanticContractError("assembled unknown evidence")
+    if type(submission) is BackendProposalSubmission:
+        if checked_proof_outcome.checker_disposition is CheckerDisposition.ACCEPTED:
+            if type(result) is not CertifiedSolutionResult:
+                raise SemanticContractError("assembled accepted proposal")
+            certificate = result.accepted_certificate
+            if (
+                result.claim_definition_ref
+                != checked_proof_outcome.checked_claim_definition_ref
+                or certificate.claim_definition_ref
+                != checked_proof_outcome.checked_claim_definition_ref
+            ):
+                raise SemanticContractError("certificate claim does not bind checker")
+            if (
+                certificate.proof_material_definition_ref
+                != evidence.proof_material.proof_material_definition_ref
+            ):
+                raise SemanticContractError(
+                    "certificate proof does not bind submission"
+                )
+            if (
+                result.program_sha256 != evidence.program_sha256
+                or result.after_scene_state_sha256 != evidence.after_scene_state_sha256
+                or certificate.program_sha256 != evidence.program_sha256
+                or certificate.after_scene_state_sha256
+                != evidence.after_scene_state_sha256
+            ):
+                raise SemanticContractError("terminal payload does not bind submission")
+        elif type(result) is not NoncertifiedWitnessResult:
+            raise SemanticContractError("assembled limited proposal")

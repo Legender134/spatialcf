@@ -17,6 +17,16 @@ general contracts；compatibility backend
 验证仍完全属于既有 verifier owner。它不是第二个 solver/verifier，也不是新的 generation
 route。
 
+本源码树还包含已逐项验证的 CPU-only
+`spatialcf/upright_se2@1` General-IR implementation：它为 direct General-IR callers
+提供 world XY translation 与 own/reference-pivot upright yaw。exact cardinal closure
+先于 continuous canonical `ARC`/`FULL_CIRCLE` directed interval checking；continuous
+请求可能产生有限的未认证 witness 或 `UNKNOWN`，不会被承诺为总能认证。backend 经不重叠的
+`solve_submission` 提交不受信任的 `BackendSubmission`；checker 只产生
+`CheckedProofOutcome`；`core.outcome_assembler` 独占 general checker dispatch、
+certificate 和 terminal-result assembly。它不改变 version-free generation API、现有
+generation route 或 `v0.1.1` tag。
+
 当前 public main 与最新 annotated release tag 不同：`v0.1.1` 仍是最新 annotated release
 tag，尚未发布 `v0.2.0`。
 下方 quickstart 因此继续精确使用 `v0.1.1`。

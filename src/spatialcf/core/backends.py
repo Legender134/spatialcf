@@ -17,6 +17,7 @@ from spatialcf.domain.definitions import (
 from spatialcf.domain.operators import OperatorDefinition
 from spatialcf.domain.outcomes import (
     BackendProposal,
+    BackendSubmission,
     CapabilityMatch,
     CapabilityMismatch,
     TypedCompilationOutcome,
@@ -33,6 +34,7 @@ from spatialcf.domain.serialization import canonical_sha256
 __all__ = (
     "CompiledProblemProtocol",
     "SolverBackendProtocol",
+    "SolverBackendProtocolV2",
     "match_backend_capabilities",
     "order_backend_matches",
 )
@@ -103,6 +105,33 @@ class SolverBackendProtocol(Protocol):
         compiled: CompiledProblemProtocol,
         config: CounterfactualSolverConfig,
     ) -> BackendProposal: ...
+
+
+@runtime_checkable
+class SolverBackendProtocolV2(Protocol):
+    """Additive submission boundary for post-M2 backends.
+
+    ``solve_submission`` intentionally does not overlap the retained
+    ``SolverBackendProtocol.solve`` execution member.  This keeps the legacy
+    finite-bound proposal wire runtime-distinguishable from terminal-evidence
+    submissions.
+    """
+
+    def inspect(
+        self,
+        solve_request: CounterfactualSolveRequest,
+    ) -> CapabilityMatch | CapabilityMismatch: ...
+
+    def compile(
+        self,
+        solve_request: CounterfactualSolveRequest,
+    ) -> CompiledProblemProtocol | TypedCompilationOutcome: ...
+
+    def solve_submission(
+        self,
+        compiled: CompiledProblemProtocol,
+        config: CounterfactualSolverConfig,
+    ) -> BackendSubmission: ...
 
 
 def _self_digest_matches(model: HashBoundCanonicalModel) -> bool:

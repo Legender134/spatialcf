@@ -26,8 +26,13 @@ from spatialcf.domain.profiles import BackendRef, OwnerRef
 from spatialcf.domain.serialization import canonical_json_bytes
 
 __all__ = (
+    "BackendCompleteUnsatEvidence",
     "BackendProposal",
+    "BackendProposalSubmission",
     "BackendSelectionRecord",
+    "BackendSubmission",
+    "BackendTerminalEvidence",
+    "BackendUnknownEvidence",
     "CapabilityMatch",
     "CapabilityMismatch",
     "CertifiedSolutionCertificate",
@@ -302,6 +307,106 @@ class BackendProposal(HashBoundCanonicalModel):
         ):
             _require_sorted_unique_by_bytes(artifacts, label)
         return self
+
+
+class BackendProposalSubmission(HashBoundCanonicalModel):
+    """The additive submission-v2 wrapper for one retained finite-bound proposal."""
+
+    HASH_DOMAIN: ClassVar[str] = (
+        "spatialcf/counterfactual/backend-proposal-submission/3.0"
+    )
+    SELF_DIGEST_FIELD: ClassVar[str] = "backend_proposal_submission_sha256"
+
+    submission_kind: Literal["PROPOSAL"] = "PROPOSAL"
+    proposal: BackendProposal
+    backend_proposal_sha256: Sha256Digest
+    backend_proposal_submission_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def _validate_retained_proposal(self) -> Self:
+        if self.backend_proposal_sha256 != self.proposal.backend_proposal_sha256:
+            raise ValueError("submission proposal digest does not match retained proposal")
+        return self
+
+
+class _BackendTerminalEvidenceBase(HashBoundCanonicalModel):
+    """Shared pre-check terminal evidence fields with no objective/program payload."""
+
+    semantic_problem_sha256: Sha256Digest
+    solve_request_sha256: Sha256Digest
+    backend_selection_record_sha256: Sha256Digest
+    proposal_backend_ref: BackendRef
+    proposal_backend_owner_ref: OwnerRef
+    proposal_backend_capability_ref: CapabilityRef
+    proposal_backend_build_sha256: Sha256Digest
+    proof_material: ProofMaterialEnvelope
+    proof_material_sha256: Sha256Digest
+    resource_usage: ResourceUsage
+    partial_artifact_refs: tuple[_ArtifactReference, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_terminal_evidence_closure(self) -> Self:
+        material = self.proof_material
+        if self.proof_material_sha256 != material.proof_material_sha256:
+            raise ValueError("terminal proof material digest does not match envelope")
+        if (
+            self.semantic_problem_sha256,
+            self.solve_request_sha256,
+            self.backend_selection_record_sha256,
+            self.proposal_backend_ref,
+        ) != (
+            material.semantic_problem_sha256,
+            material.solve_request_sha256,
+            material.backend_selection_record_sha256,
+            material.proposal_backend_ref,
+        ):
+            raise ValueError("terminal evidence roots do not match proof material")
+        _require_sorted_unique_by_bytes(
+            self.partial_artifact_refs,
+            "terminal partial artifacts",
+        )
+        return self
+
+
+class BackendCompleteUnsatEvidence(_BackendTerminalEvidenceBase):
+    """Untrusted complete-domain empty evidence without fabricated bounds."""
+
+    HASH_DOMAIN: ClassVar[str] = (
+        "spatialcf/counterfactual/backend-complete-unsat-evidence/3.0"
+    )
+    SELF_DIGEST_FIELD: ClassVar[str] = "backend_complete_unsat_evidence_sha256"
+
+    submission_kind: Literal["COMPLETE_DOMAIN_UNSAT_EVIDENCE"] = (
+        "COMPLETE_DOMAIN_UNSAT_EVIDENCE"
+    )
+    complete_domain_claim_definition_ref: DefinitionRef
+    authorized_domain_sha256: Sha256Digest
+    complete_domain_coverage_artifact_sha256: Sha256Digest
+    backend_complete_unsat_evidence_sha256: Sha256Digest
+
+
+class BackendUnknownEvidence(_BackendTerminalEvidenceBase):
+    """Untrusted selected-backend unknown evidence without fabricated bounds."""
+
+    HASH_DOMAIN: ClassVar[str] = (
+        "spatialcf/counterfactual/backend-unknown-evidence/3.0"
+    )
+    SELF_DIGEST_FIELD: ClassVar[str] = "backend_unknown_evidence_sha256"
+
+    submission_kind: Literal["UNKNOWN_EVIDENCE"] = "UNKNOWN_EVIDENCE"
+    reason_claim_definition_ref: DefinitionRef
+    backend_unknown_evidence_sha256: Sha256Digest
+
+
+BackendTerminalEvidence: TypeAlias = Annotated[
+    BackendCompleteUnsatEvidence | BackendUnknownEvidence,
+    Field(discriminator="submission_kind"),
+]
+
+BackendSubmission: TypeAlias = Annotated[
+    BackendProposalSubmission | BackendCompleteUnsatEvidence | BackendUnknownEvidence,
+    Field(discriminator="submission_kind"),
+]
 
 
 class CheckerDisposition(StrEnum):

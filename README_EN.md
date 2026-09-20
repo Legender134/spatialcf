@@ -19,6 +19,18 @@ verifier. Existing v2 result/certificate verification remains entirely owned by
 the existing verifier owner. It is not a second solver or verifier, and it does
 not create a new generation route.
 
+This source tree also contains the individually verified CPU-only
+`spatialcf/upright_se2@1` General-IR implementation. It gives direct
+General-IR callers world XY translation and upright yaw about own or reference
+pivots. Exact cardinal closure precedes continuous canonical `ARC`/`FULL_CIRCLE`
+directed interval checking; a continuous request can yield a limited
+uncertified witness or `UNKNOWN` and is not promised universal certification.
+Its backend submits untrusted `BackendSubmission` evidence through the disjoint
+`solve_submission`; the checker produces only `CheckedProofOutcome`; and
+`core.outcome_assembler` solely dispatches general checking and assembles
+certificates and terminal results. This does not change the version-free
+generation API, the existing generation route, or the `v0.1.1` tag.
+
 Current public `main` is distinct from the latest annotated release tag:
 `v0.1.1` remains the latest annotated release tag and `v0.2.0` has not been
 released. The quick start below therefore continues to use the exact `v0.1.1`
