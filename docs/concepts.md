@@ -8,8 +8,17 @@ execution.
 The Schema represents scenes, object geometry, relations, interventions,
 evidence, and results in canonical coordinates. Core relations are `left`,
 `right`, `front`, `behind`, `near`, and `far`. A counterfactual moves exactly one
-movable object in world X/Y while preserving its height, orientation, scale,
-category, camera, lighting, and material.
+movable object in world X/Y. The published v2/M2 generation behavior preserves
+its height, orientation, scale, category, camera, lighting, and material.
+
+The separate CPU-only `spatialcf/upright_se2@1` General-IR profile extends only
+direct General-IR work with upright yaw around the subject's own pivot or a
+named reference pivot; it does not change generation behavior. Exact cardinal
+yaw closes before continuous yaw. Continuous requests use canonical
+`ARC`/`FULL_CIRCLE` intervals lifted with exact dyadic endpoints and checked
+directed bounds. They can remain LIMITED with an uncertified witness or
+`UNKNOWN`; finite misses, numeric gaps, unsupported capabilities, and resource
+exhaustion are never UNSAT.
 
 ## Minimum-cost solver
 

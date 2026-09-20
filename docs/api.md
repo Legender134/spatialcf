@@ -14,6 +14,32 @@ the existing verifier. This is not a second solver or verifier, and it does not
 add a generation entry point or change the supported `spatialcf.generation` API
 above.
 
+## Advanced upright SE(2) General-IR implementation
+
+This source tree contains the CPU-only `spatialcf/upright_se2@1` implementation
+for direct General-IR integration. It is an advanced source-level contract, not
+a package facade, a new CLI, or an addition to the supported version-free
+`spatialcf.generation` API. It does not change the existing generation route or
+the `v0.1.1` tag.
+
+The domain contract is in `spatialcf.domain.upright_se2`; compilation, proposal
+submission, fresh checking, and terminal assembly respectively live in
+`spatialcf.core.upright_se2_compiler`, `spatialcf.core.upright_se2_backend`,
+`spatialcf.core.upright_se2_verification`, and
+`spatialcf.core.outcome_assembler`. The profile supports world XY translation
+and upright yaw around an own or named reference pivot. Exact cardinal yaw
+closes before continuous yaw. Continuous domains use canonical `ARC` or
+`FULL_CIRCLE` with exact-dyadic lifted intervals and checked directed bounds.
+
+`solve_submission` is deliberately disjoint from retained v1 `solve`: it emits
+untrusted `BackendSubmission` proposal, complete-domain UNSAT, or UNKNOWN
+evidence. The checker produces only `CheckedProofOutcome` and never assembles a
+terminal result. `core.outcome_assembler` is the sole general-IR checker
+dispatcher, certificate owner, and terminal-result assembler. A finite miss,
+numeric gap, unsupported capability, resource exhaustion, or feasible-incomplete
+frontier is never fabricated as UNSAT; feasible-incomplete work remains LIMITED
+with an uncertified witness.
+
 ## Generate
 
 ```python
