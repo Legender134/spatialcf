@@ -27,6 +27,15 @@ route。
 certificate 和 terminal-result assembly。它不改变 version-free generation API、现有
 generation route 或 `v0.1.1` tag。
 
+本源码树新增 CPU-only semantic contrast dataset 接口：
+`spatialcf.generation.contrast.generate_semantic_contrast_dataset` 与
+`verify_semantic_contrast_dataset`。输入是显式冻结的场景、请求和预算 catalog；
+每个候选保留一个终态，只有经既有 checker 和 outcome assembler 接受的认证结果
+成为 before/after 语义对。输出保留内容寻址的 source、证明和 lineage，并在原子发布前
+重新读取和重放验证。`UNKNOWN`、未认证 witness、严格 UNSAT 和策略拒绝均保留在台账中。
+语义 after 状态不是渲染图像或 native 回放；native execution 始终为 `NOT_REQUESTED`。
+高级入口详见 [Python API](docs/api.md#semantic-contrast-datasets)。
+
 当前 public main 与最新 annotated release tag 不同：`v0.1.1` 仍是最新 annotated release
 tag，尚未发布 `v0.2.0`。
 下方 quickstart 因此继续精确使用 `v0.1.1`。

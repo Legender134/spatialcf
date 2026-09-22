@@ -3211,8 +3211,8 @@ def _evaluate_continuous_yaw_cell_checked_v4(
         support_surface,
     )
     contact_gap = (
-        min(value.aabb_z.rational_lower - support_surface.z for value in subjects),
-        max(value.aabb_z.rational_upper - support_surface.z for value in subjects),
+        min(value.center_z - value.half_z - support_surface.z for value in subjects),
+        max(value.center_z - value.half_z - support_surface.z for value in subjects),
     )
     accepted_lower, accepted_upper = policy.support_accepted_contact_gap
     contact_inner = min(

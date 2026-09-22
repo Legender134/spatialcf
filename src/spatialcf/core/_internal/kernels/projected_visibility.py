@@ -894,10 +894,9 @@ def evaluate_continuous_yaw_visibility_v4(
 ) -> ContinuousYawVisibilityOutcomeV4:
     """Project a complete continuous pose cell through the retained camera owner.
 
-    A cardinal point cell delegates byte-for-byte geometry evaluation to the
-    reviewed v3 entry point.  A nondegenerate yaw or translation cell projects
-    the full outer envelope; it can establish an outside result, but all
-    visible/occlusion ambiguity remains explicitly ``UNKNOWN``.
+    Cardinal points retain the v3 path. Other point poses bound the true rotated
+    corners for an inward projected-bounding-box visibility bound. Nonpoint
+    poses retain the outer-envelope path and explicit visibility ambiguity.
     """
 
     if type(context) is not UprightCameraContextV2_9:
@@ -940,7 +939,12 @@ def evaluate_continuous_yaw_visibility_v4(
             policy=policy,
             atomic_budget=atomic_budget,
         )
-    required_steps = 80 * (1 + len(checked_occluders))
+    point_subject = (
+        subject.cell.x_lower == subject.cell.x_upper
+        and subject.cell.y_lower == subject.cell.y_upper
+        and subject.yaw_bounds.lift_bounds.lower == subject.yaw_bounds.lift_bounds.upper
+    )
+    required_steps = 80 * (1 + len(checked_occluders)) + (33 if point_subject else 0)
     if atomic_budget.remaining < required_steps:
         return _continuous_visibility_failure_v4(
             so2_interval.ContinuousYawIntervalKindV4.RESOURCE_LIMIT,
@@ -949,12 +953,18 @@ def evaluate_continuous_yaw_visibility_v4(
             proof_rows=("RESOURCE:SO2_ATOMIC_STEPS:cap-minus-one",),
         )
     initial_used = atomic_budget.used
+    point_inner_fraction = Fraction()
     try:
-        subject_projection = _project_box_v3(
-            context=context,
-            cell=(Fraction(), Fraction(), Fraction(), Fraction()),
-            box=_continuous_outer_projection_box_v4(subject),
-            atomic_budget=atomic_budget,
+        subject_projection = (
+            _project_continuous_point_box_v4(
+                context=context, box=subject, atomic_budget=atomic_budget,
+            )
+            if point_subject else _project_box_v3(
+                context=context,
+                cell=(Fraction(), Fraction(), Fraction(), Fraction()),
+                box=_continuous_outer_projection_box_v4(subject),
+                atomic_budget=atomic_budget,
+            )
         )
         occluder_projections = tuple(
             _project_box_v3(
@@ -965,6 +975,27 @@ def evaluate_continuous_yaw_visibility_v4(
             )
             for value in checked_occluders
         )
+        if point_subject and subject_projection is not None and subject_projection.outer.area > 0:
+            # Outer occluder envelopes establish possible cover only. Their
+            # inner rectangles are not inward bounds for actual rotated boxes.
+            inner_area = (
+                Fraction() if subject_projection.inner is None
+                else subject_projection.inner.area
+            )
+            possible_cover = sum(
+                (_intersection_area_v3(subject_projection.inner, projection.outer)
+                 for value, projection in zip(checked_occluders, occluder_projections, strict=True)
+                 if value.box.box_id != subject.box.box_id and projection is not None
+                 and projection.depth_lower <= subject_projection.depth_upper),
+                Fraction(),
+            )
+            raw_inner_fraction = max(Fraction(), inner_area - possible_cover) / subject_projection.outer.area
+            atomic_budget.consume()
+            # Directed publication keeps the lower bound conservative and avoids
+            # transporting a product of large exact trigonometric denominators.
+            point_inner_fraction = Fraction.from_float(
+                so2_interval._fraction_floor_binary64(raw_inner_fraction)
+            )
     except SO2AtomicBudgetExhaustedV2:
         return _continuous_visibility_failure_v4(
             so2_interval.ContinuousYawIntervalKindV4.RESOURCE_LIMIT,
@@ -1012,6 +1043,9 @@ def evaluate_continuous_yaw_visibility_v4(
         )
         depth = (subject_projection.depth_lower, subject_projection.depth_upper)
         classification_row = "CLASSIFICATION:NONDEGENERATE_OUTER_ENVELOPE_UNKNOWN"
+        if point_subject:
+            inner_fraction = point_inner_fraction
+            classification_row = "CLASSIFICATION:POINT_DIRECTED_CORNER_BOUND:BINARY64_LOWER"
     proof_rows = tuple(
         sorted(
             (
@@ -1042,6 +1076,87 @@ def evaluate_continuous_yaw_visibility_v4(
         bounds=bounds,
         atomic_steps_used=atomic_budget.used - initial_used,
         proof_rows=proof_rows,
+    )
+
+
+def _project_continuous_point_box_v4(
+    *, context: UprightCameraContextV2_9,
+    box: upright_box_interval.ContinuousYawBoxBoundsV4,
+    atomic_budget: SO2AtomicBudgetV2,
+) -> _ProjectedBoxV3 | None:
+    """Bound actual rotated corners, never the corners of an outer world AABB.
+
+    Independent coordinate intervals may overestimate each corner. Reversed
+    projected extrema nevertheless enclose a common inner bounding rectangle.
+    This proves the retained bounding-box metric, not a filled silhouette.
+    """
+    def checked(value: _Interval) -> _Interval:
+        for endpoint in value:
+            so2_interval._require_numeric_fraction_cap(
+                endpoint, "NUMERIC_GAP:CONTINUOUS_VISIBILITY_CORNER_FRACTION_BIT_CAP",
+            )
+        return value
+
+    def scale(value: _Interval, factor: Fraction) -> _Interval:
+        atomic_budget.consume()
+        checked(value)
+        checked((factor, factor))
+        products = (value[0] * factor, value[1] * factor)
+        return checked((min(products), max(products)))
+
+    def add(left: _Interval, right: _Interval) -> _Interval:
+        atomic_budget.consume()
+        checked(left)
+        checked(right)
+        return checked((left[0] + right[0], left[1] + right[1]))
+
+    def endpoints(value: so2_interval.RationalEnclosureV2) -> _Interval:
+        return (value.rational_lower, value.rational_upper)
+
+    xy = tuple(
+        (
+            add(endpoints(box.center_x), add(
+                scale(endpoints(box.local_x_axis.x), x),
+                scale(endpoints(box.local_y_axis.x), y),
+            )),
+            add(endpoints(box.center_y), add(
+                scale(endpoints(box.local_x_axis.y), x),
+                scale(endpoints(box.local_y_axis.y), y),
+            )),
+        )
+        for x in (-box.half_x, box.half_x)
+        for y in (-box.half_y, box.half_y)
+    )
+    points = tuple(
+        bound_world_point_in_upright_camera(
+            context, world_xyz=(Fraction(), Fraction(), z),
+            delta_x=x, delta_y=y, atomic_budget=atomic_budget,
+        )
+        for x, y in xy for z in (box.center_z - box.half_z, box.center_z + box.half_z)
+    )
+    depth_lower = min(point.z_camera[0] for point in points)
+    depth_upper = max(point.z_camera[1] for point in points)
+    if depth_upper <= context.near_clip_m or depth_lower >= context.far_clip_m:
+        return None
+    if depth_lower <= context.near_clip_m < depth_upper:
+        raise _VisibilityClipGapV3("NEAR_CLIP")
+    if depth_lower < context.far_clip_m <= depth_upper:
+        raise _VisibilityClipGapV3("FAR_CLIP")
+    fx, _, cx, _, fy, cy, *_ = context.intrinsics
+    horizontal = tuple(
+        _project_coordinate_v3(focal=fx, principal=cx, camera_axis=point.x_camera,
+                              depth=point.z_camera, screen_limit=context.width_px)
+        for point in points
+    )
+    vertical = tuple(
+        _project_coordinate_v3(focal=fy, principal=cy, camera_axis=point.y_camera,
+                              depth=point.z_camera, screen_limit=context.height_px)
+        for point in points
+    )
+    return _ProjectedBoxV3(
+        inner=_inner_rectangle_v3(horizontal, vertical),
+        outer=_outer_rectangle_v3(horizontal, vertical),
+        depth_lower=depth_lower, depth_upper=depth_upper,
     )
 
 
