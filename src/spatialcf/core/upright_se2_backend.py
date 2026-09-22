@@ -96,6 +96,15 @@ _Submission: TypeAlias = (
 class UprightSE2CardinalBackend:
     """A V2-only exact-cardinal backend with no retained ``solve`` member."""
 
+    def select(self, solve_request: CounterfactualSolveRequest) -> BackendSelectionRecord:
+        """Expose the deterministic routing record used by submissions."""
+
+        if not _is_exact_model(solve_request, CounterfactualSolveRequest):
+            raise TypeError("selection requires an exact CounterfactualSolveRequest")
+        return _selection_record(
+            solve_request, _descriptor_or_none(solve_request), self.inspect(solve_request)
+        )
+
     def inspect(
         self,
         solve_request: CounterfactualSolveRequest,
@@ -160,9 +169,8 @@ class UprightSE2CardinalBackend:
 
         compilation = _require_exact_compilation(compiled)
         request = compilation.source_solve_request
-        descriptor = _descriptor_or_none(request)
-        inspection = self.inspect(request)
-        selection = _selection_record(request, descriptor, inspection)
+        selection = self.select(request)
+        inspection = selection.capability_rows[0]
         if not isinstance(inspection, CapabilityMatch):
             proof = _synthetic_incomplete_proof(
                 compilation,
@@ -190,6 +198,16 @@ class UprightSE2CardinalBackend:
 
 class UprightSE2ContinuousBackend:
     """V2-only continuous submission backend with no checker/result authority."""
+
+    def select(self, solve_request: CounterfactualSolveRequest) -> BackendSelectionRecord:
+        """Expose the continuous submission's existing selection owner."""
+
+        if not _is_exact_model(solve_request, CounterfactualSolveRequest):
+            raise TypeError("selection requires an exact CounterfactualSolveRequest")
+        return _continuous_selection_record(
+            solve_request, _continuous_descriptor_or_none(solve_request),
+            self.inspect(solve_request),
+        )
 
     def inspect(
         self,
@@ -236,9 +254,8 @@ class UprightSE2ContinuousBackend:
     ) -> BackendSubmission:
         compilation = _require_exact_continuous_compilation(compiled)
         request = compilation.source_solve_request
-        descriptor = _continuous_descriptor_or_none(request)
-        inspection = self.inspect(request)
-        selection = _continuous_selection_record(request, descriptor, inspection)
+        selection = self.select(request)
+        inspection = selection.capability_rows[0]
         if not isinstance(inspection, CapabilityMatch):
             return _continuous_unknown_submission(
                 compilation,
