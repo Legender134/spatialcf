@@ -40,6 +40,117 @@ numeric gap, unsupported capability, resource exhaustion, or feasible-incomplete
 frontier is never fabricated as UNSAT; feasible-incomplete work remains LIMITED
 with an uncertified witness.
 
+## Semantic placement
+
+`spatialcf/semantic_place@1` is a direct-GeneralIR CPU profile. Use a complete
+CanonicalScene with exact identity-oriented boxes and closed horizontal
+rectangular supports. The existing editable object's real ID must start with
+`entity:`; the builder does not rename source objects. Supply finite closed
+world X/Y/Z bounds and sorted, unique target IDs. The subject must initially
+have valid support and must not already satisfy any requested target goal.
+
+```python
+from spatialcf.core.semantic_place_compiler import build_semantic_place_request
+from spatialcf.core.semantic_place_backend import SemanticPlaceBackend
+from spatialcf.core.outcome_assembler import (
+    assemble_counterfactual_outcome, assemble_no_selection_unknown,
+)
+from spatialcf.domain.semantic_place import SemanticPlaceInterval
+
+# scene is the caller's complete CanonicalScene, with these existing IDs.
+request = build_semantic_place_request(
+    scene=scene, subject_id="entity:subject", operation="PLACE_ON",
+    target_ids=("surface:table",),
+    x=SemanticPlaceInterval(lower=-10.0, upper=10.0),
+    y=SemanticPlaceInterval(lower=-10.0, upper=10.0),
+    z=SemanticPlaceInterval(lower=0.0, upper=10.0),
+    cavities=(),
+)
+backend = SemanticPlaceBackend()
+selection = backend.select(request)
+if selection.selection_disposition == "NO_SELECTION":
+    outcome = assemble_no_selection_unknown(
+        solve_request=request, selection=selection,
+    )
+else:
+    compiled = backend.compile(request)
+    submission = backend.solve_submission(compiled, request.solver_config)
+    outcome = assemble_counterfactual_outcome(
+        solve_request=request, selection=selection,
+        compilation=compiled, submission=submission,
+    )
+```
+
+For `PLACE_IN`, pass sorted cavity IDs as targets and explicit
+`SemanticPlaceCavityFact.seal(...)` records through `cavities`. Each record
+names an existing owner, an identity-oriented owner-local cavity frame, positive
+centered interior dimensions, its bottom support surface, and the sorted complete
+roster of that owner's collision bodies. The declared open interior must not
+intersect those solids, and its bottom must coincide with and fit on the owner's
+support. The builder freezes every cavity's full fact address into one complete
+inventory; `cavities=()` explicitly declares an empty inventory. A bounding box
+of a solid object is not a cavity.
+
+`support_margin_m`, `lateral_margin_m`, and `top_margin_m` are explicit
+nonnegative clearances. `limits=SemanticPlaceLimits(...)` freezes numeric,
+target, stratum and separate compilation/solve/check budgets. Geometry outside
+this exact subset produces typed unsupported evidence after selection. Numeric
+gaps and incomplete budget prefixes produce UNKNOWN. Only complete continuous
+coverage proves UNSAT. Malformed inputs or tampered proofs raise validation
+errors. If the checker cannot finish within its own budget, the assembler
+rejects the unverified submission; no certificate or relabelled result is issued.
+
+The objective is squared world-XYZ displacement with a deterministic target-ID,
+then exact-XYZ tie break. A winning endpoint must round-trip exactly through
+binary64; otherwise it remains a numeric gap. Finite proposal cost bounds may
+be unequal outward bounds while the proof retains the exact cost. Only changed
+XYZ/support-assignment leaves enter the complete delta; all other source facts
+remain unchanged. The checker freshly evaluates containment for every declared
+cavity, including cavities that are not targets. Trusted terminal resource usage
+adds the independently checked replay cost to the producer's counters.
+
+The standalone `tests/public_smoke/test_semantic_place.py` supplies synthetic
+ON, IN and NO_SELECTION examples using only shipped modules. The existing 96
+generation exports, M4 format and CLI remain unchanged. This profile performs
+no rendering, native execution or motion-path validation.
+
+## Finite multi-object rigid SE(3) General IR
+
+`spatialcf/rigid_se3_multi@1` is an advanced CPU profile for direct General IR callers. Its source must be an explicit, exact extension inventory over an empty `CanonicalScene` carrier. The profile does not convert existing upright v2 objects into tilted rigid bodies. The source names every body, local rectangular collision box, root pose, joint, contact definition and current joint/contact state. The request binds a finite roster of ordered program skeletons with finite or continuous choice domains.
+
+Each atomic step can set several root poses, joint values and contact modes together. The evaluator reconstructs every link's world pose and checks collision, contact and all registered invariants at every program prefix; it checks the after-goal at the final endpoint. For a finite domain, complete checked enumeration certifies the least exact rational objective among *that request's authorized programs*, or certifies UNSAT if every member is refuted. This is not a global optimum over unlisted actions or all physical motions.
+
+The self-contained `tests/public_smoke/test_rigid_se3.py` is a runnable request-building and fresh-assembly example using only shipped runtime modules. After installing SpatialCF in a Python 3.11 environment from a public source checkout or sdist, run `python -m pytest -q tests/public_smoke/test_rigid_se3.py` there. To inspect the selected certified case in an interactive Python session from that checkout:
+
+```python
+from pathlib import Path
+from runpy import run_path
+
+from spatialcf.core.outcome_assembler import assemble_counterfactual_outcome
+from spatialcf.core.rigid_se3_backend import RigidSE3Backend
+
+example = run_path(str(Path("tests/public_smoke/test_rigid_se3.py")))
+built = example["build_public_case"]("certified")
+backend = RigidSE3Backend()
+selection = backend.select(built.request)
+compiled = backend.compile(built.request)
+submission = backend.solve_submission(compiled, built.request.solver_config)
+outcome = assemble_counterfactual_outcome(
+    solve_request=built.request,
+    selection=selection,
+    compilation=compiled,
+    submission=submission,
+)
+assert outcome.result.structural_outcome_class == "CERTIFIED_SOLUTION"
+assert outcome.certificate is not None
+```
+
+The example's `build_public_case` calls `build_rigid_se3_request` with a complete two-body prismatic/contact source, an atomic edit set, exact finite choices, objective, precondition and goal. The same file exercises complete finite UNSAT, continuous UNKNOWN, a noncertified exact witness and NO_SELECTION. A disabled backend follows `assemble_no_selection_unknown`, with no selected checker or certificate.
+
+Finite root translations and exact rational SO(3) matrices, fixed/prismatic/revolute forest joints, local rectangular boxes, endpoint face contact and registered grounded predicates are supported. Continuous translation boxes, ALL_SO3 rotation, prismatic intervals and full-circle revolute domains are represented but remain unclosed: they yield a typed UNKNOWN or a freshly checked feasible witness without an optimality certificate. Missing/inexact source facts, unsupported registered capability, numeric gaps and resource exhaustion never become UNSAT. Invalid or changed proof material is rejected rather than relabelled.
+
+The result proves complete endpoint states and every discrete edit prefix. It does not certify swept paths, dynamics, stability, friction, rendering, native execution or arbitrary meshes. The version-free `spatialcf.generation` API, its single-object planar route and M4 data format remain unchanged; native execution is `NOT_REQUESTED`.
+
 ## Semantic contrast datasets
 
 The advanced CPU-only API is available from `spatialcf.generation.contrast`:
