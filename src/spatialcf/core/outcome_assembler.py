@@ -64,6 +64,34 @@ def assemble_counterfactual_outcome(
 ) -> AssembledCounterfactualOutcome:
     """Dispatch fresh M3 checking, then assemble exactly one terminal envelope."""
 
+    if type(solve_request) is CounterfactualSolveRequest:
+        profile = solve_request.semantic_problem.action_space_profile_ref
+        if profile == "spatialcf/rigid_se3_multi@1":
+            return _assemble_rigid_se3(solve_request, selection, compilation, submission)
+        if profile == "spatialcf/semantic_place@1":
+            return _assemble_semantic_place(solve_request, selection, compilation, submission)
+        if profile != upright.UPRIGHT_SE2_PROFILE_REF:
+            raise ValueError("unsupported assembler action-space profile")
+        if type(compilation) not in (upright.UprightSE2Compilation, upright.UprightSE2ContinuousCompilation):
+            raise TypeError("M3 assembler requires its exact compiled problem")
+        if compilation.source_solve_request != solve_request:
+            raise ValueError("M3 compilation source request does not match")
+        if type(submission) not in (BackendProposalSubmission, BackendCompleteUnsatEvidence, BackendUnknownEvidence):
+            raise TypeError("checker accepts only exact M3 backend submissions")
+        evidence, _proof, _claim = _submission_parts(submission)
+        proof_type = (upright.UprightSE2ContinuousProofMaterial
+                      if type(compilation) is upright.UprightSE2ContinuousCompilation
+                      else upright.UprightSE2ProofMaterial)
+        if type(_proof) is not proof_type:
+            raise ValueError("M3 proof type does not match compilation")
+        for record in (selection, evidence, evidence.proof_material):
+            if (record.semantic_problem_sha256, record.solve_request_sha256) != (
+                solve_request.semantic_problem_sha256, solve_request.solve_request_sha256,
+            ):
+                raise ValueError("M3 pre-dispatch source roots do not match")
+    else:
+        raise TypeError("assembler requires an exact solve request")
+
     checked = verify_upright_se2_submission(
         solve_request=solve_request,
         selection=selection,
@@ -158,6 +186,11 @@ def assemble_no_selection_unknown(
     selection: BackendSelectionRecord,
 ) -> AssembledCounterfactualOutcome:
     """Assemble the only pre-dispatch terminal without inventing a proof."""
+
+    if type(solve_request) is CounterfactualSolveRequest and getattr(solve_request.semantic_problem, "action_space_profile_ref", None) == "spatialcf/rigid_se3_multi@1":
+        return _assemble_rigid_se3_no_selection(solve_request, selection)
+    if type(solve_request) is CounterfactualSolveRequest and getattr(solve_request.semantic_problem, "action_space_profile_ref", None) == "spatialcf/semantic_place@1":
+        return _assemble_semantic_place_no_selection(solve_request, selection)
 
     if selection.selection_disposition != "NO_SELECTION":
         raise ValueError("no-selection assembler requires NO_SELECTION routing")
@@ -438,3 +471,351 @@ def _zero_resource_usage(solve_request: CounterfactualSolveRequest) -> ResourceU
             "exhausted": False,
         }
     )
+
+
+def _assemble_semantic_place(solve_request, selection, compilation, submission):
+    from spatialcf.core.semantic_place_compiler import (
+        BUILDS, OWNERS, SemanticPlaceCompiledProblem, grounded_obligations,
+        validate_semantic_place_request,
+    )
+    from spatialcf.core.semantic_place_verification import (
+        decode_semantic_place_proof, verify_semantic_place_submission,
+    )
+    from spatialcf.domain.semantic_place import definition, schema
+
+    if type(compilation) is not SemanticPlaceCompiledProblem:
+        raise TypeError("M5 assembler requires its exact compiled problem")
+    if compilation.source_solve_request != solve_request:
+        raise ValueError("M5 compilation source request does not match")
+    # Reject cross-profile proof types before checker dispatch.
+    evidence, proof = decode_semantic_place_proof(submission)
+    for record in (selection, evidence, evidence.proof_material, proof):
+        if (record.semantic_problem_sha256, record.solve_request_sha256) != (
+            solve_request.semantic_problem_sha256, solve_request.solve_request_sha256,
+        ):
+            raise ValueError("M5 pre-dispatch source roots do not match")
+    context = validate_semantic_place_request(solve_request)
+    checked = verify_semantic_place_submission(
+        solve_request=solve_request, selection=selection,
+        compilation=compilation, submission=submission,
+    )
+    if not any(row.artifact_schema_ref == schema("checked-proof") for row in checked.checked_fact_refs):
+        raise ValueError("M5 checker replay budget exhausted; submission is not accepted")
+    if type(submission) is not BackendUnknownEvidence and checked.checker_disposition is not CheckerDisposition.ACCEPTED:
+        raise ValueError("M5 requires an accepted complete proof")
+    dispatch = VerifierDispatchRecord.seal(
+        semantic_problem_sha256=solve_request.semantic_problem_sha256,
+        solve_request_sha256=solve_request.solve_request_sha256,
+        semantic_definition_bundle_sha256=solve_request.semantic_problem.definition_bundle.definition_bundle_sha256,
+        solve_policy_definition_bundle_sha256=solve_request.solve_policy_definition_bundle.definition_bundle_sha256,
+        proof_policy_sha256=solve_request.proof_policy.proof_policy_sha256,
+        backend_selection_record_sha256=selection.backend_selection_record_sha256,
+        proposal_backend_owner_ref=evidence.proposal_backend_owner_ref,
+        proposal_backend_capability_ref=evidence.proposal_backend_capability_ref,
+        proposal_backend_build_sha256=evidence.proposal_backend_build_sha256,
+        proof_material_definition_ref=evidence.proof_material.proof_material_definition_ref,
+        checker_owner_ref=OWNERS["checker"], checker_capability_ref=checked.checker_capability_ref,
+        checker_build_sha256=BUILDS["checker"], checked_proof_outcome_sha256=checked.checked_proof_outcome_sha256,
+    )
+    usage = _semantic_place_checked_resource_usage(proof,evidence,checked)
+    result_fields = dict(
+        semantic_problem_sha256=solve_request.semantic_problem_sha256,
+        solve_request_sha256=solve_request.solve_request_sha256,
+        backend_selection_record_sha256=selection.backend_selection_record_sha256,
+        checked_proof_outcome_sha256=checked.checked_proof_outcome_sha256,
+        verifier_dispatch_record_sha256=dispatch.verifier_dispatch_record_sha256,
+        checker_disposition=checked.checker_disposition, resource_usage=usage,
+    )
+    if type(submission) is BackendUnknownEvidence:
+        result = UnknownResult.seal(**result_fields,claim_definition_ref=definition("unknown"),
+            reason_claim_definition_ref=submission.reason_claim_definition_ref,partial_artifact_refs=submission.partial_artifact_refs)
+        return _validated(submission,selection,AssembledCounterfactualOutcome(checked,dispatch,None,result,None,None))
+    roots = _semantic_place_certificate_roots(context,selection,evidence,checked,dispatch,usage)
+    if type(submission) is BackendProposalSubmission:
+        program = proof.program
+        grounded = grounded_obligations(solve_request)
+        certificate = CertifiedSolutionCertificate.seal(**roots,claim_definition_ref=definition("certified"),
+            program_sha256=program.program_sha256,after_scene_state_sha256=program.after_scene_state_sha256,
+            state_delta_manifest_sha256=program.state_delta_manifest.state_delta_manifest_sha256,
+            grounded_obligation_set_sha256=grounded.grounded_obligation_set_sha256)
+        result = CertifiedSolutionResult.seal(**result_fields,claim_definition_ref=certificate.claim_definition_ref,
+            accepted_certificate=certificate,certificate_sha256=certificate.certificate_sha256,
+            program_sha256=program.program_sha256,after_scene_state_sha256=program.after_scene_state_sha256)
+        return _validated(submission,selection,AssembledCounterfactualOutcome(checked,dispatch,certificate,result,program,grounded))
+    certificate = ProvenUnsatCertificate.seal(**roots,claim_definition_ref=definition("unsat"),
+        authorized_domain_sha256=submission.authorized_domain_sha256,
+        complete_domain_coverage_artifact_sha256=submission.complete_domain_coverage_artifact_sha256,
+        complete_domain_claim_definition_ref=definition("complete-domain"),sound_complete_domain_claim_definition_ref=definition("sound-complete-domain"))
+    result = ProvenUnsatResult.seal(**result_fields,claim_definition_ref=certificate.claim_definition_ref,
+        accepted_certificate=certificate,certificate_sha256=certificate.certificate_sha256,
+        complete_domain_coverage_artifact_sha256=submission.complete_domain_coverage_artifact_sha256)
+    return _validated(submission,selection,AssembledCounterfactualOutcome(checked,dispatch,certificate,result,None,None))
+
+
+def _semantic_place_certificate_roots(context,selection,evidence,checked,dispatch,usage):
+    request = context.request
+    problem = request.semantic_problem
+    return dict(
+        semantic_problem_sha256=request.semantic_problem_sha256, solve_request_sha256=request.solve_request_sha256,
+        scene_state_sha256=problem.scene_state.scene_state_sha256,
+        backend_selection_record_sha256=selection.backend_selection_record_sha256,
+        checked_proof_outcome_sha256=checked.checked_proof_outcome_sha256,
+        verifier_dispatch_record_sha256=dispatch.verifier_dispatch_record_sha256,
+        semantic_definition_bundle_sha256=problem.definition_bundle.definition_bundle_sha256,
+        solve_policy_definition_bundle_sha256=request.solve_policy_definition_bundle.definition_bundle_sha256,
+        semantics_profile_sha256=context.registry_arguments['semantics_profile'].semantics_profile_sha256,
+        action_space_profile_sha256=context.registry_arguments['action_space_profile'].action_space_profile_sha256,
+        intervention_authorization_sha256=problem.intervention_authorization.intervention_authorization_sha256,
+        objective_expression_sha256=problem.objective_expression.objective_expression_sha256,
+        proof_policy_sha256=request.proof_policy.proof_policy_sha256,
+        resource_policy_sha256=request.resource_policy.resource_policy_sha256,
+        backend_routing_policy_sha256=request.backend_routing_policy.backend_routing_policy_sha256,
+        solver_config_sha256=request.solver_config.solver_config_sha256,
+        implementation_registry_snapshot_sha256=request.implementation_registry_snapshot.implementation_registry_snapshot_sha256,
+        backend_descriptor_bundle_sha256=request.backend_descriptor_bundle.backend_descriptor_bundle_sha256,
+        proposal_backend_build_sha256=evidence.proposal_backend_build_sha256,
+        checker_build_sha256=checked.checker_build_sha256,
+        proof_material_definition_ref=evidence.proof_material.proof_material_definition_ref,
+        proof_material_sha256=evidence.proof_material_sha256,
+        checker_disposition=checked.checker_disposition,resource_usage=usage,
+    )
+
+
+def _assemble_semantic_place_no_selection(solve_request, selection):
+    from spatialcf.core.semantic_place_compiler import validate_semantic_place_request
+    from spatialcf.core.semantic_place_verification import validate_semantic_place_selection
+    from spatialcf.domain.semantic_place import definition
+
+    context=validate_semantic_place_request(solve_request)
+    validate_semantic_place_selection(context,selection)
+    if selection.selection_disposition!='NO_SELECTION':
+        raise ValueError('M5 no-selection assembler requires NO_SELECTION')
+    result=UnknownResult.seal(semantic_problem_sha256=solve_request.semantic_problem_sha256,
+        solve_request_sha256=solve_request.solve_request_sha256,claim_definition_ref=definition('unknown'),
+        backend_selection_record_sha256=selection.backend_selection_record_sha256,
+        resource_usage=_semantic_place_zero_resource_usage(solve_request),reason_claim_definition_ref=definition('unknown'))
+    return AssembledCounterfactualOutcome(None,None,None,result,None,None)
+
+
+def _semantic_place_zero_resource_usage(solve_request):
+    from spatialcf.domain.semantic_place import definition
+
+    return ResourceUsage.model_validate(dict(accounting_claim_definition_ref=definition('accounting'),
+        entries=tuple(dict(resource_definition_ref=row.definition_ref,used=0.0) for row in solve_request.resource_policy.limits),exhausted=False),strict=True)
+
+
+def _semantic_place_checked_resource_usage(proof,evidence,checked):
+    from spatialcf.domain.semantic_place import SemanticPlaceLedger, definition, schema, HASH_PREFIX
+    from spatialcf.domain.serialization import canonical_sha256
+
+    ledgers=[proof.failure_ledger,proof.transition_ledger]
+    if proof.compilation is not None:ledgers.append(proof.compilation.ledger)
+    if proof.coverage is not None:ledgers.append(proof.coverage.ledger)
+    ledgers=[row for row in ledgers if row is not None]
+    operations=sum(max((row.replay_operations for row in ledgers if row.stage==stage),default=0) for stage in ('COMPILE','SOLVE'))
+    peak=max((row.peak_numeric_bits for row in ledgers),default=0)
+    ledger=SemanticPlaceLedger(stage='CHECK',operations=operations,replay_operations=operations,peak_numeric_bits=peak,
+        completed_items=('replay:complete',),first_unprocessed_item=None)
+    digest=canonical_sha256(ledger,domain=HASH_PREFIX+'/checked-ledger')
+    if not any(row.artifact_schema_ref==schema('checked-ledger') and row.artifact_sha256==digest for row in checked.checked_fact_refs):
+        raise ValueError('terminal resource total differs from fresh checker ledger')
+    usage=evidence.resource_usage
+    entries=tuple(row.model_copy(update={'used':float(operations)}) if row.resource_definition_ref==definition('resource/check_operations') else row for row in usage.entries)
+    return ResourceUsage(accounting_claim_definition_ref=usage.accounting_claim_definition_ref,entries=entries,exhausted=usage.exhausted)
+
+
+def _assemble_rigid_se3(solve_request, selection, compilation, submission):
+    """The only M6 checker dispatch and terminal assembly boundary."""
+    from spatialcf.core.rigid_se3_compiler import (
+        BUILDS, OWNERS, RigidSE3CompiledProblem, _grounded_obligations,
+        d, c, validate_rigid_se3_request,
+    )
+    from spatialcf.core.rigid_se3_verification import (
+        _verify_rigid_se3_submission_with_ledger,
+    )
+    from spatialcf.domain.rigid_se3 import decode_proof_material, schema
+    from spatialcf.domain.serialization import canonical_sha256
+
+    if type(compilation) is not RigidSE3CompiledProblem:
+        raise TypeError("M6 assembler requires its exact compiled problem")
+    if compilation.source_solve_request != solve_request:
+        raise ValueError("M6 compilation source request does not match")
+    if type(submission) is BackendProposalSubmission:
+        evidence = submission.proposal
+    elif type(submission) in (BackendCompleteUnsatEvidence, BackendUnknownEvidence):
+        evidence = submission
+    else:
+        raise TypeError("M6 assembler requires an exact V2 backend submission")
+    if len(evidence.proof_material.typed_payload) != 1 or evidence.proof_material.proof_material_definition_ref != d("proof-material"):
+        raise ValueError("M6 pre-dispatch proof schema does not match")
+    proof = decode_proof_material(evidence.proof_material.typed_payload[0])
+    roots = (solve_request.semantic_problem_sha256, solve_request.solve_request_sha256)
+    for record in (selection, evidence, evidence.proof_material, proof):
+        if (record.semantic_problem_sha256, record.solve_request_sha256) != roots:
+            raise ValueError("M6 pre-dispatch source roots do not match")
+    context = validate_rigid_se3_request(solve_request)
+    checked, check_ledger = _verify_rigid_se3_submission_with_ledger(
+        solve_request=solve_request, selection=selection,
+        compilation=compilation, submission=submission)
+    if check_ledger.stage != "CHECK" or check_ledger.reason != "NONE":
+        raise ValueError("M6 checker replay budget exhausted; no terminal proof")
+    digest = canonical_sha256(
+        check_ledger, domain="spatialcf/counterfactual/rigid-se3/checked-ledger/1.0")
+    facts = {(row.artifact_schema_ref, row.artifact_sha256)
+             for row in checked.checked_fact_refs}
+    if ((schema("checked-ledger"), digest) not in facts
+            or (schema("checked-proof"), proof.rigid_se3_proof_sha256) not in facts):
+        raise ValueError("M6 terminal requires the fresh complete CHECK receipt")
+    usage = _rigid_se3_checked_resource_usage(evidence.resource_usage, check_ledger, d)
+    dispatch = VerifierDispatchRecord.seal(
+        semantic_problem_sha256=roots[0], solve_request_sha256=roots[1],
+        semantic_definition_bundle_sha256=solve_request.semantic_problem.definition_bundle.definition_bundle_sha256,
+        solve_policy_definition_bundle_sha256=solve_request.solve_policy_definition_bundle.definition_bundle_sha256,
+        proof_policy_sha256=solve_request.proof_policy.proof_policy_sha256,
+        backend_selection_record_sha256=selection.backend_selection_record_sha256,
+        proposal_backend_owner_ref=evidence.proposal_backend_owner_ref,
+        proposal_backend_capability_ref=evidence.proposal_backend_capability_ref,
+        proposal_backend_build_sha256=evidence.proposal_backend_build_sha256,
+        proof_material_definition_ref=evidence.proof_material.proof_material_definition_ref,
+        checker_owner_ref=OWNERS["checker"],
+        checker_capability_ref=c("check"), checker_build_sha256=BUILDS["checker"],
+        checked_proof_outcome_sha256=checked.checked_proof_outcome_sha256,
+    )
+    result_fields = dict(
+        semantic_problem_sha256=roots[0], solve_request_sha256=roots[1],
+        backend_selection_record_sha256=selection.backend_selection_record_sha256,
+        checked_proof_outcome_sha256=checked.checked_proof_outcome_sha256,
+        verifier_dispatch_record_sha256=dispatch.verifier_dispatch_record_sha256,
+        checker_disposition=checked.checker_disposition, resource_usage=usage,
+    )
+    if type(submission) is BackendUnknownEvidence:
+        if (checked.checker_disposition is not CheckerDisposition.LIMITED
+                or checked.checked_claim_definition_ref != submission.reason_claim_definition_ref):
+            raise ValueError("M6 unknown reason lacks fresh checker support")
+        result = UnknownResult.seal(
+            **result_fields, claim_definition_ref=d("unknown"),
+            reason_claim_definition_ref=submission.reason_claim_definition_ref,
+            partial_artifact_refs=submission.partial_artifact_refs)
+        return _validated(submission, selection, AssembledCounterfactualOutcome(
+            checked, dispatch, None, result, None, None))
+    if type(submission) is BackendProposalSubmission:
+        if proof.winner_trace is None:
+            raise ValueError("M6 proposal has no freshly proved winner")
+        program = proof.winner_trace.program
+        if (program.program_sha256 != submission.proposal.program_sha256
+                or proof.winner_trace.after_state_sha256 != submission.proposal.after_scene_state_sha256):
+            raise ValueError("M6 proposal does not bind checked program and endpoint")
+        grounded = _grounded_obligations(solve_request.semantic_problem)
+        if checked.checker_disposition is CheckerDisposition.LIMITED:
+            if checked.checked_claim_definition_ref != d("certified"):
+                raise ValueError("M6 partial proposal has unsupported checked claim")
+            result = NoncertifiedWitnessResult.seal(
+                **result_fields, claim_definition_ref=d("witness"),
+                evidence_claim_definition_ref=submission.proposal.proposal_claim_definition_ref,
+                program_sha256=program.program_sha256,
+                after_scene_state_sha256=proof.winner_trace.after_state_sha256)
+            return _validated(submission, selection, AssembledCounterfactualOutcome(
+                checked, dispatch, None, result, program, grounded))
+        if (checked.checker_disposition is not CheckerDisposition.ACCEPTED
+                or checked.checked_claim_definition_ref != d("certified")
+                or d("certified") not in solve_request.proof_policy.accepted_claim_definition_refs):
+            raise ValueError("M6 certified proposal fails proof policy")
+        certificate = CertifiedSolutionCertificate.seal(
+            **_rigid_se3_certificate_roots(context, selection, evidence, checked,
+                                           dispatch, usage),
+            claim_definition_ref=d("certified"),
+            program_sha256=program.program_sha256,
+            after_scene_state_sha256=proof.winner_trace.after_state_sha256,
+            state_delta_manifest_sha256=program.state_delta_manifest.state_delta_manifest_sha256,
+            grounded_obligation_set_sha256=grounded.grounded_obligation_set_sha256)
+        result = CertifiedSolutionResult.seal(
+            **result_fields, claim_definition_ref=certificate.claim_definition_ref,
+            accepted_certificate=certificate,
+            certificate_sha256=certificate.certificate_sha256,
+            program_sha256=program.program_sha256,
+            after_scene_state_sha256=proof.winner_trace.after_state_sha256)
+        return _validated(submission, selection, AssembledCounterfactualOutcome(
+            checked, dispatch, certificate, result, program, grounded))
+    if (checked.checker_disposition is not CheckerDisposition.ACCEPTED
+            or checked.checked_claim_definition_ref != d("unsat")
+            or d("unsat") not in solve_request.proof_policy.accepted_claim_definition_refs
+            or proof.coverage is None or proof.coverage.ledger.reason != "NONE"):
+        raise ValueError("M6 UNSAT lacks complete accepted coverage and policy")
+    certificate = ProvenUnsatCertificate.seal(
+        **_rigid_se3_certificate_roots(context, selection, evidence, checked,
+                                       dispatch, usage),
+        claim_definition_ref=d("unsat"),
+        authorized_domain_sha256=submission.authorized_domain_sha256,
+        complete_domain_coverage_artifact_sha256=submission.complete_domain_coverage_artifact_sha256,
+        complete_domain_claim_definition_ref=d("complete-domain"),
+        sound_complete_domain_claim_definition_ref=d("sound-complete-domain"))
+    result = ProvenUnsatResult.seal(
+        **result_fields, claim_definition_ref=certificate.claim_definition_ref,
+        accepted_certificate=certificate, certificate_sha256=certificate.certificate_sha256,
+        complete_domain_coverage_artifact_sha256=submission.complete_domain_coverage_artifact_sha256)
+    return _validated(submission, selection, AssembledCounterfactualOutcome(
+        checked, dispatch, certificate, result, None, None))
+
+
+def _rigid_se3_checked_resource_usage(usage, ledger, definition):
+    operations = float(sum(row.amount for row in ledger.events))
+    values = {row.resource_definition_ref: row.used for row in usage.entries}
+    values[definition("resource/check_operations")] = operations
+    values[definition("resource/max_exact_operations")] = max(
+        values[definition("resource/max_exact_operations")], operations)
+    values[definition("resource/numeric_bits")] = max(
+        values[definition("resource/numeric_bits")], float(ledger.peak_numeric_bits))
+    return ResourceUsage.model_validate(dict(
+        accounting_claim_definition_ref=usage.accounting_claim_definition_ref,
+        entries=tuple(dict(resource_definition_ref=ref, used=amount)
+                      for ref, amount in sorted(values.items())),
+        exhausted=usage.exhausted), strict=True)
+
+
+def _rigid_se3_certificate_roots(context, selection, evidence, checked, dispatch, usage):
+    request = context.request
+    problem = request.semantic_problem
+    return dict(
+        semantic_problem_sha256=problem.semantic_problem_sha256,
+        solve_request_sha256=request.solve_request_sha256,
+        scene_state_sha256=problem.scene_state.scene_state_sha256,
+        backend_selection_record_sha256=selection.backend_selection_record_sha256,
+        checked_proof_outcome_sha256=checked.checked_proof_outcome_sha256,
+        verifier_dispatch_record_sha256=dispatch.verifier_dispatch_record_sha256,
+        semantic_definition_bundle_sha256=problem.definition_bundle.definition_bundle_sha256,
+        solve_policy_definition_bundle_sha256=request.solve_policy_definition_bundle.definition_bundle_sha256,
+        semantics_profile_sha256=context.registry_arguments["semantics_profile"].semantics_profile_sha256,
+        action_space_profile_sha256=context.registry_arguments["action_space_profile"].action_space_profile_sha256,
+        intervention_authorization_sha256=problem.intervention_authorization.intervention_authorization_sha256,
+        objective_expression_sha256=problem.objective_expression.objective_expression_sha256,
+        proof_policy_sha256=request.proof_policy.proof_policy_sha256,
+        resource_policy_sha256=request.resource_policy.resource_policy_sha256,
+        backend_routing_policy_sha256=request.backend_routing_policy.backend_routing_policy_sha256,
+        solver_config_sha256=request.solver_config.solver_config_sha256,
+        implementation_registry_snapshot_sha256=request.implementation_registry_snapshot.implementation_registry_snapshot_sha256,
+        backend_descriptor_bundle_sha256=request.backend_descriptor_bundle.backend_descriptor_bundle_sha256,
+        proposal_backend_build_sha256=evidence.proposal_backend_build_sha256,
+        checker_build_sha256=checked.checker_build_sha256,
+        proof_material_definition_ref=evidence.proof_material.proof_material_definition_ref,
+        proof_material_sha256=evidence.proof_material_sha256,
+        checker_disposition=checked.checker_disposition, resource_usage=usage)
+
+
+def _assemble_rigid_se3_no_selection(solve_request, selection):
+    from spatialcf.core.rigid_se3_compiler import d, validate_rigid_se3_request
+    from spatialcf.core.rigid_se3_verification import _selection
+
+    context = validate_rigid_se3_request(solve_request)
+    _selection(context, selection, require_selected=False)
+    usage = ResourceUsage.model_validate(dict(
+        accounting_claim_definition_ref=d("accounting"),
+        entries=tuple(dict(resource_definition_ref=row.definition_ref, used=0.0)
+                      for row in solve_request.resource_policy.limits),
+        exhausted=False), strict=True)
+    result = UnknownResult.seal(
+        semantic_problem_sha256=solve_request.semantic_problem_sha256,
+        solve_request_sha256=solve_request.solve_request_sha256,
+        claim_definition_ref=d("unknown"),
+        backend_selection_record_sha256=selection.backend_selection_record_sha256,
+        resource_usage=usage, reason_claim_definition_ref=d("unknown"))
+    return AssembledCounterfactualOutcome(None, None, None, result, None, None)

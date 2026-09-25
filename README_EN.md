@@ -31,6 +31,8 @@ Its backend submits untrusted `BackendSubmission` evidence through the disjoint
 certificates and terminal results. This does not change the version-free
 generation API, the existing generation route, or the `v0.1.1` tag.
 
+This source tree also includes the direct-GeneralIR CPU profile `spatialcf/rigid_se3_multi@1`. Explicit exact multi-body box, joint and contact facts define ordered atomic edit sets with complete endpoint and prefix checks. A fresh independent checker certifies a minimum over the entire authorized *finite* program universe or complete UNSAT only after exhaustive coverage. Unclosed continuous domains yield a typed UNKNOWN or a feasible witness without an optimality certificate. The profile handles full 3D root poses, noncardinal rational rotations and fixed/prismatic/revolute forest joints; it does not certify swept paths, dynamics or native execution. See the [Python API](docs/api.md#finite-multi-object-rigid-se3-general-ir) for a runnable request and five terminal examples. The existing generation route and M4 data format are unchanged; native execution is `NOT_REQUESTED`.
+
 Current public `main` is distinct from the latest annotated release tag:
 `v0.1.1` remains the latest annotated release tag and `v0.2.0` has not been
 released. The quick start below therefore continues to use the exact `v0.1.1`
