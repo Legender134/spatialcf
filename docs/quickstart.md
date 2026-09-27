@@ -1,5 +1,21 @@
 # Quick start
 
+## CPU general counterfactual datasets
+
+From a checkout containing the general dataset feature, after installing the
+package and its existing dependencies:
+
+```bash
+python examples/general_dataset.py input.json
+spatialcf general generate --input input.json --output dataset
+spatialcf general verify dataset
+spatialcf general inspect dataset
+```
+
+Use new paths. The example generates two certified synthetic before/after pairs
+using M5 placement and M6 joint/contact facts. Verification independently replays
+the retained proofs and can take minutes on CPU. See [API and proof limits](api.md#general-counterfactual-datasets).
+
 `v0.1.1` is a GitHub release, not a PyPI publication. Clone it and run the
 complete workflow from the local checkout:
 

@@ -32,7 +32,7 @@ def _assert_structured_parse_error(result: Result, error_type: str) -> None:
     assert "Traceback" not in result.stderr
 
 
-def test_public_cli_has_only_three_commands() -> None:
+def test_public_cli_has_exact_legacy_commands_and_general_group() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
@@ -43,7 +43,10 @@ def test_public_cli_has_only_three_commands() -> None:
     assert "compare" not in result.stdout
     command = get_command(app)
     assert isinstance(command, typer.core.TyperGroup)
-    assert tuple(sorted(command.commands)) == ("generate", "inspect", "verify")
+    assert tuple(sorted(command.commands)) == ("general", "generate", "inspect", "verify")
+    general = command.commands["general"]
+    assert isinstance(general, typer.core.TyperGroup)
+    assert tuple(sorted(general.commands)) == ("generate", "inspect", "verify")
 
 
 def test_bare_invocation_preserves_no_args_help() -> None:
@@ -72,10 +75,11 @@ def test_cli_error_is_structured_without_traceback(tmp_path: Path) -> None:
     assert "Traceback" not in result.stderr
 
 
-def test_missing_required_option_is_structured(tmp_path: Path) -> None:
+@pytest.mark.parametrize("prefix", [[], ["general"]])
+def test_missing_required_option_is_structured(tmp_path: Path, prefix: list[str]) -> None:
     result = runner.invoke(
         app,
-        ["generate", "--output", str(tmp_path / "dataset")],
+        [*prefix, "generate", "--output", str(tmp_path / "dataset")],
     )
 
     _assert_structured_parse_error(result, "MissingParameter")
@@ -96,8 +100,9 @@ def test_nonexistent_config_is_a_structured_facade_error(tmp_path: Path) -> None
     _assert_structured_parse_error(result, "FileNotFoundError")
 
 
-def test_unknown_command_is_structured() -> None:
-    result = runner.invoke(app, ["unknown-command"])
+@pytest.mark.parametrize("arguments", [["unknown-command"], ["general", "unknown-command"]])
+def test_unknown_command_is_structured(arguments: list[str]) -> None:
+    result = runner.invoke(app, arguments)
 
     _assert_structured_parse_error(result, "UsageError")
 

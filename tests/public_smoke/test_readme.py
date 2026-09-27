@@ -383,7 +383,10 @@ def test_documented_cli_commands_use_only_the_public_surface() -> None:
     assert command_lines
     for line in command_lines:
         arguments = shlex.split(line)
-        assert arguments[1] in {"--help", "generate", "verify", "inspect"}
+        assert arguments[1] in {"--help", "generate", "verify", "inspect", "general"}
+        if arguments[1] == "general":
+            assert len(arguments) >= 3
+            assert arguments[2] in {"generate", "verify", "inspect"}
         assert not re.search(r"\b(audit|compare|sample-review|validate-review)\b", line)
 
 
