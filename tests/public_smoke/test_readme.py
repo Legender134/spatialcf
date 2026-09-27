@@ -37,6 +37,8 @@ cd spatialcf
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install ".[ai2thor]"'''
+CPU_SETUP = 'git clone --branch main --depth 1 https://github.com/Legender134/spatialcf.git\ncd spatialcf\npython3.11 -m venv .venv\n. .venv/bin/activate\npython -m pip install .'
+CPU_QUICKSTART = CPU_SETUP + '\npython examples/general_dataset.py input.json --case placement\nspatialcf general generate --input input.json --output dataset\nspatialcf general verify dataset\nspatialcf general inspect dataset'
 PUBLIC_DOCS = (
     ROOT / "README.md",
     ROOT / "README_EN.md",
@@ -173,21 +175,21 @@ def _assert_no_index_only_ai2thor_install(paths: tuple[Path, ...]) -> None:
             assert not _is_index_only_ai2thor_install(command), (path, command)
 
 
-def test_public_installation_surfaces_begin_with_the_release_local_setup() -> None:
+def test_public_installation_surfaces_begin_with_the_documented_local_setup() -> None:
     for path in PUBLIC_INSTALLATION_SURFACES:
         assert any(
-            block.startswith(LOCAL_SETUP) for block in _fenced_shell_blocks(path)
+            block.startswith(LOCAL_SETUP if path.name == "adapters.md" else CPU_SETUP) for block in _fenced_shell_blocks(path)
         ), path
 
 
-def test_quickstart_fences_continue_from_the_release_local_setup() -> None:
+def test_quickstart_fences_continue_from_the_cpu_local_setup() -> None:
     for path in (
         ROOT / "README.md",
         ROOT / "README_EN.md",
         PUBLIC_DOC_ROOT / "quickstart.md",
     ):
         assert any(
-            block.startswith(QUICKSTART) for block in _fenced_shell_blocks(path)
+            block.startswith(CPU_QUICKSTART) for block in _fenced_shell_blocks(path)
         ), path
 
 

@@ -442,8 +442,35 @@ from spatialcf.generation.general import (
 )
 
 
-def example_input() -> GeneralDatasetInput:
-    """One placement and one two-body prismatic joint/contact transition."""
+def _witness_hints(case):
+    if case != "witness":
+        return ()
+    from spatialcf.domain.rigid_se3 import (
+        RigidSE3MemberChoice,
+        RigidSE3StepChoice,
+        RigidSE3WitnessHint,
+    )
+
+    return (RigidSE3WitnessHint(
+        skeleton_id="program:atomic",
+        steps=(RigidSE3StepChoice(members=(
+            RigidSE3MemberChoice(
+                kind="SET_CONTACT_MODE", target_id="contact:ab", mode="ENGAGED"
+            ),
+            RigidSE3MemberChoice(
+                kind="SET_JOINT", target_id="joint:ab", offset_m=_q(2)
+            ),
+            RigidSE3MemberChoice(
+                kind="SET_ROOT_SE3", target_id="entity:a", pose=_pose()
+            ),
+        )),),
+    ),)
+
+
+def example_input(case: str = "mixed") -> GeneralDatasetInput:
+    """Build fresh facts; only independently certified results publish pairs."""
+    if case not in {"mixed", "placement", "multibody", "unknown", "unsat", "witness"}:
+        raise ValueError(f"unknown example case: {case}")
     placement = PlacementSnapshot.seal(
         source_id="source:placement",
         dataset_id="dataset:example",
@@ -473,12 +500,21 @@ def example_input() -> GeneralDatasetInput:
         RigidTask.seal(
             candidate_id="candidate:joint-contact",
             source_id=rigid.source_id,
-            domain=_domain(scene, facts, continuous=False, only_release=False),
+            domain=_domain(
+                scene, facts,
+                continuous=case in {"unknown", "witness"},
+                only_release=case == "unsat",
+            ),
+            witness_hints=_witness_hints(case),
             objective=_objective(),
             after_goal=AfterGoal(formula=_goal()),
             limits=RigidSE3Limits(max_evaluated_tuples=4),
         ),
     )
+    if case == "placement":
+        return GeneralDatasetInput.seal(sources=(placement,), tasks=(tasks[0],))
+    if case != "mixed":
+        return GeneralDatasetInput.seal(sources=(rigid,), tasks=(tasks[1],))
     return GeneralDatasetInput.seal(sources=(placement, rigid), tasks=tasks)
 
 
@@ -488,11 +524,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="new input JSON path")
     parser.add_argument(
+        "--case",
+        choices=("mixed", "placement", "multibody", "unknown", "unsat", "witness"),
+        default="mixed",
+    )
+    parser.add_argument(
         "--output", type=Path, help="optional new output directory; generate and verify"
     )
     arguments = parser.parse_args()
     with arguments.input.open("xb") as stream:
-        stream.write(canonical_json_bytes(example_input()))
+        stream.write(canonical_json_bytes(example_input(arguments.case)))
     if arguments.output is not None:
         generated = generate_general_dataset(arguments.input, arguments.output)
         assert verify_general_dataset(arguments.output) == generated
