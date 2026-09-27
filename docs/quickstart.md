@@ -2,44 +2,86 @@
 
 ## CPU general counterfactual datasets
 
-From a checkout containing the general dataset feature, after installing the
-package and its existing dependencies:
+Start with current `main` and Python 3.11:
 
 ```bash
-python examples/general_dataset.py input.json
+git clone --branch main --depth 1 https://github.com/Legender134/spatialcf.git
+cd spatialcf
+python3.11 -m venv .venv
+. .venv/bin/activate
+python -m pip install .
+python examples/general_dataset.py input.json --case placement
 spatialcf general generate --input input.json --output dataset
 spatialcf general verify dataset
 spatialcf general inspect dataset
 ```
 
-Use new paths. The example generates two certified synthetic before/after pairs
-using M5 placement and M6 joint/contact facts. Verification independently replays
-the retained proofs and can take minutes on CPU. See [API and proof limits](api.md#general-counterfactual-datasets).
+The input is a synthetic scene and task catalog. The placement case moves a unit
+box from the floor onto a raised table: the certified endpoint is
+`(3.5, 0, 1.5)` on `surface:table`. Each command uses the same retained input and
+proofs. Verification is fresh; it can take minutes for multi-body cases.
+`inspect` also verifies before printing, so it is not a cheap unverified peek.
+Use new paths: input creation and dataset publication refuse to overwrite them.
 
-`v0.1.1` is a GitHub release, not a PyPI publication. Clone it and run the
-complete workflow from the local checkout:
+## Choose a case
+
+Change `--case placement` and use a different input/output path for each run.
+
+| Case | Task | Expected terminal / pairs |
+| --- | --- | --- |
+| `placement` | Put a box onto a table | PUBLISHED_PAIR / 1 |
+| `multibody` | Close a prismatic joint and engage face contact | PUBLISHED_PAIR / 1 |
+| `mixed` (default) | Both preceding tasks | PUBLISHED_PAIR / 2 |
+| `unsat` | Require contact while the finite domain only permits release | PROVEN_UNSAT / 0 |
+| `unknown` | Continuous root domain without complete proof or a hint | UNKNOWN / 0 |
+| `witness` | Same continuous domain with an exact feasible program | NONCERTIFIED_WITNESS / 0 |
+
+For example:
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/Legender134/spatialcf.git
-cd spatialcf
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install ".[ai2thor]"
-spatialcf generate --config configs/ai2thor-example.toml --output ./dataset
-spatialcf verify ./dataset
-spatialcf inspect ./dataset
+python examples/general_dataset.py unknown-input.json --case unknown
+spatialcf general generate --input unknown-input.json --output unknown-dataset
+spatialcf general verify unknown-dataset
 ```
 
-The example selects the Unity/AI2-THOR Adapter and `FloorPlan2`. It freezes at
-most 12 requests using the declared seed. Accepted requests are written as
-records; rejected requests remain visible in the report without being promoted
-to accepted data.
+A separate low-budget planar solver example uses two boxes, a floor and a camera:
 
-The output directory must not already contain a published dataset. If generation
-is interrupted before publication, rerun the same command with the same
-configuration and output path. SpatialCF verifies reusable stage state before
-resuming and never changes the frozen request roster.
+```bash
+python examples/planar.py
+```
 
-`verify` performs a fresh, read-only check of metadata, records, assets, stage
-state, and checksums. `inspect` performs that same verification before printing a
-compact count and relation summary.
+It prints the actual solver outcome and fresh v2 replay result. Its bounded
+budget may leave the task uncertified; it does not promise a certified pair or
+write the general dataset format. The v2 verifier replays its solver; the
+M5/M6 general checker independently replays retained proof material without
+running backend search.
+
+## Read the result
+
+| File | Meaning |
+| --- | --- |
+| `input.json` | Explicit source facts, tasks and publication policy |
+| `catalog.json` | Frozen candidate requests and budgets |
+| `terminals.json` | One outcome per candidate, including all non-published outcomes |
+| `records.json` | Certified false-before / true-after pairs and lineage |
+| `report.json` | Counts by outcome and published pairs |
+| `provenance.json` | Runtime module identities |
+| `manifest.json` | Sealed file inventory |
+
+`PUBLISHED_PAIR` means the applicable checker accepted the solution and required
+optimality evidence. `PROVEN_UNSAT` means the complete authorized domain was
+proved infeasible. `UNKNOWN` means no such conclusion was justified.
+`NONCERTIFIED_WITNESS` retains a feasible program without certified optimality;
+it is not a published pair. Do not collapse these outcomes into a binary label.
+
+These are semantic endpoints and discrete prefixes, not rendered observations,
+physical stability guarantees or collision-free swept paths. M5 uses fixed
+axis-aligned boxes; M6 uses finite exact box primitives and acyclic joints.
+See [concepts](concepts.md) and [API](api.md#general-counterfactual-datasets).
+
+## Native Adapter route
+
+The separate `spatialcf generate/verify/inspect` route uses an Adapter-specific
+configuration and a different dataset format. See [Adapters](adapters.md) for
+installation and native prerequisites. The historical `v0.1.1` annotated tag
+retains that older workflow; it does not provide `spatialcf general`.

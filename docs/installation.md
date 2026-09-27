@@ -1,28 +1,24 @@
 # Installation
 
-SpatialCF supports Python 3.11. `v0.1.1` is a GitHub release, not a PyPI
-publication. Clone that release tag, then create an isolated environment and
-install the local package with the AI2-THOR Adapter:
+Use Python 3.11. Install current public `main` from a local checkout for the CPU examples:
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/Legender134/spatialcf.git
+git clone --branch main --depth 1 https://github.com/Legender134/spatialcf.git
 cd spatialcf
-python -m venv .venv
+python3.11 -m venv .venv
 . .venv/bin/activate
-python -m pip install ".[ai2thor]"
+python -m pip install .
 ```
 
-The base package contains the platform-neutral Schema, solver, generation
-contracts, and verification logic. The `ai2thor` extra adds the first Adapter,
-which connects those contracts to Unity/AI2-THOR.
+The base package provides the platform-neutral Schema, solvers and verification.
+No native runtime is required for `spatialcf general`. Check `spatialcf --help`;
+it exposes `generate`, `verify`, `inspect` and the `general` group.
 
-Confirm the command-line installation with:
+Record `git rev-parse HEAD` with each experiment. The metadata version remains
+`0.1.1`; the historical `v0.1.1` annotated tag does not contain all current-main
+interfaces. Neither the tag nor these commands are a PyPI publication.
 
-```bash
-spatialcf --help
-```
-
-The command list contains only `generate`, `verify`, and `inspect`.
-
-For Python development and smoke tests, install the package's `test` extra in a
-separate checkout environment.
+Continue with [the CPU quick start](quickstart.md). Install `.[ai2thor]` only for
+the separate [Adapter workflow](adapters.md); that route requires its native
+runtime. Maintainers can install `.[test]` for public smoke tests in a separate
+environment. No simulator starts during those synthetic smoke tests.

@@ -11,7 +11,7 @@ repeated native execution.
 
 ## Unity/AI2-THOR
 
-Unity/AI2-THOR is the first supported Adapter. `v0.1.1` is a GitHub release,
+Unity/AI2-THOR is the first supported Adapter. `v0.1.1` is a historical annotated tag,
 not a PyPI publication, so install the Adapter from a local checkout of that
 release:
 
@@ -33,3 +33,20 @@ do not cause result-dependent candidate ordering or replacement requests.
 
 The Adapter boundary is designed so another simulator or a real-world capture
 system can reuse the same Schema, solver, dataset index, and verification flow.
+
+## Generate and verify an Adapter dataset
+
+After installing and configuring the native runtime separately:
+
+```bash
+spatialcf generate --config configs/ai2thor-example.toml --output ./dataset
+spatialcf verify ./dataset
+spatialcf inspect ./dataset
+```
+
+This configuration selects `FloorPlan2`; it requires a working native build and
+graphics environment. The CPU quick start does not run it. Adapter output uses
+`manifest.json`, `records.jsonl`, `report.json`, `checksums.sha256`, `assets/`
+and resumable `.spatialcf/` state. Use these commands, not `general verify`, for
+that format. Native failures remain recorded outcomes; they are not evidence of
+geometric UNSAT.

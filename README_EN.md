@@ -2,93 +2,57 @@
 
 # SpatialCF
 
-The opt-in `spatialcf general` route builds, exports and independently verifies
-CPU M5/M6 datasets from explicit scene snapshots. Placement and multi-body
-joint/contact tasks retain every terminal outcome; only certified solutions
-become before/after pairs. See [the example and limits](docs/api.md#general-counterfactual-datasets).
+SpatialCF generates **independently verifiable spatial counterfactual data**. Supply scene facts, a goal and authorized edits; the system searches for a false-to-true change and retains replayable evidence. Only certified solutions become before/after pairs. Proven infeasibility, unresolved requests and noncertified feasible witnesses remain distinct outcomes.
 
-SpatialCF generates verified spatial counterfactual datasets. Current chain: domain/core → adapter protocol → generation → fresh verification. It freezes requests from scene observations, plans single-object planar moves with a minimum-cost solver, connects platform facts and Canonical Edits through the Adapter protocol, and freshly verifies the results and dataset files.
+## Run a CPU example
 
-The Schema, solver, and verification logic are platform-neutral. Unity/AI2-THOR
-is the first Adapter and connects platform facts and native operations to the
-public generation chain.
-
-## Current `main` status
-
-The stable generation chain is unchanged. Current public `main` includes the
-advanced `spatialcf/planar_translate@2` compatibility embedding: it maps sealed
-v2 inputs into general contracts. Its compatibility backend
-`spatialcf.core.planar_backend.PlanarTranslateBackend` delegates exactly once to
-the existing `spatialcf.core.solver.solve_minimum_cost` and does not call the
-verifier. Existing v2 result/certificate verification remains entirely owned by
-the existing verifier owner. It is not a second solver or verifier, and it does
-not create a new generation route.
-
-This source tree also contains the individually verified CPU-only
-`spatialcf/upright_se2@1` General-IR implementation. It gives direct
-General-IR callers world XY translation and upright yaw about own or reference
-pivots. Exact cardinal closure precedes continuous canonical `ARC`/`FULL_CIRCLE`
-directed interval checking; a continuous request can yield a limited
-uncertified witness or `UNKNOWN` and is not promised universal certification.
-Its backend submits untrusted `BackendSubmission` evidence through the disjoint
-`solve_submission`; the checker produces only `CheckedProofOutcome`; and
-`core.outcome_assembler` solely dispatches general checking and assembles
-certificates and terminal results. This does not change the version-free
-generation API, the existing generation route, or the `v0.1.1` tag.
-
-This source tree also includes the direct-GeneralIR CPU profile `spatialcf/rigid_se3_multi@1`. Explicit exact multi-body box, joint and contact facts define ordered atomic edit sets with complete endpoint and prefix checks. A fresh independent checker certifies a minimum over the entire authorized *finite* program universe or complete UNSAT only after exhaustive coverage. Unclosed continuous domains yield a typed UNKNOWN or a feasible witness without an optimality certificate. The profile handles full 3D root poses, noncardinal rational rotations and fixed/prismatic/revolute forest joints; it does not certify swept paths, dynamics or native execution. See the [Python API](docs/api.md#finite-multi-object-rigid-se3-general-ir) for a runnable request and five terminal examples. The existing generation route and M4 data format are unchanged; native execution is `NOT_REQUESTED`.
-
-Current public `main` is distinct from the latest annotated release tag:
-`v0.1.1` remains the latest annotated release tag and `v0.2.0` has not been
-released. The quick start below therefore continues to use the exact `v0.1.1`
-tag.
-
-## Repository and release
-
-The authoritative user-facing repository is
-[`Legender134/spatialcf`](https://github.com/Legender134/spatialcf). `v0.1.1`
-is the latest annotated release tag. It is not a PyPI publication and is not a
-GitHub Release. Clone that tag and install from the local checkout.
-
-Public releases come from a verified deterministic snapshot. Complete
-development history, private release manifests, and recovery evidence stay in
-separate private development and archive boundaries and are never copied into
-the user repository.
-
-## Quick start
-
-Python 3.11 is required. These commands create an environment, install the
-AI2-THOR Adapter, generate a dataset, and reopen it for verification and
-inspection:
+Use Python 3.11 and current `main`. The base package needs no Unity, AI2-THOR or GPU. These explicit synthetic facts produce semantic scenes and proofs, not rendered images.
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/Legender134/spatialcf.git
+git clone --branch main --depth 1 https://github.com/Legender134/spatialcf.git
 cd spatialcf
-python -m venv .venv
+python3.11 -m venv .venv
 . .venv/bin/activate
-python -m pip install ".[ai2thor]"
-spatialcf generate --config configs/ai2thor-example.toml --output ./dataset
-spatialcf verify ./dataset
-spatialcf inspect ./dataset
+python -m pip install .
+python examples/general_dataset.py input.json --case placement
+spatialcf general generate --input input.json --output dataset
+spatialcf general verify dataset
+spatialcf general inspect dataset
 ```
 
-`generate` never silently replaces a published dataset. `verify` rereads the
-metadata, records, assets, and checksums; `inspect` returns a summary only after
-full verification succeeds.
+Use new input/output paths. This case places a box from the floor onto a table and certifies its endpoint and minimum displacement. `verify` rereads the dataset and checks retained proofs; `inspect` performs the same verification before summarizing. Complex cases can take minutes.
 
-## Dataset contents
+Continue with the [CPU quick start](docs/quickstart.md) for multi-body, infeasible and unresolved cases and output interpretation.
 
-The generated directory contains `manifest.json`, `records.jsonl`, `report.json`,
-`checksums.sha256`, content-addressed `assets/`, and resumable `.spatialcf/`
-state. Rejected requests appear only in report counts and never become accepted
-records.
+## Capabilities
 
-## Documentation
+| Task | Interface and scope |
+| --- | --- |
+| Move one object to flip left/right/front/behind/near/far | v2/M2 world XY; fixed height and orientation; existing generation contracts |
+| Translate and turn around own/reference pivots | M3 upright SE(2); certified closed subdomains, otherwise UNKNOWN or witnesses |
+| Retain semantic pairs and source lineage | M4 semantic contrast; explicit requests and budgets; no rendered native output |
+| Place on supports or inside cavities | M5 PLACE_ON/PLACE_IN; exact axis-aligned boxes, horizontal supports, explicit rectangular cavities |
+| Edit multiple bodies, 3D poses, joints and contacts | M6 finite exact box models, joint forests, ordered edit sets, prefix and commutativity checks |
+| Batch, export and independently verify M5/M6 data | `spatialcf general generate/verify/inspect`; only certified pairs are published |
+
+Proofs cover the declared model and authorized domain. M6 global optimality/UNSAT requires exhaustive finite-universe coverage and independent checking. Unclosed continuous domains, exhausted budgets and weak backend claims cannot establish UNSAT. A feasible witness does not establish optimality.
+
+Swept paths, dynamics, physical stability, arbitrary meshes and closed-loop joints are outside this scope. CPU facts are not authenticated native observations. Schema, solvers and verification are platform-neutral; the Unity/AI2-THOR Adapter connects the native runtime.
+
+## Outputs and routes
+
+A general dataset has seven files: `input.json`, `catalog.json`, `terminals.json`, `records.json`, `report.json`, `provenance.json`, `manifest.json`. Every candidate retains its terminal outcome; only `PUBLISHED_PAIR` contributes a pair.
+
+The existing `spatialcf generate/verify/inspect` commands use the separate Adapter dataset format. See [Adapters](docs/adapters.md); use the verifier matching the dataset route.
+
+## Version and documentation
+
+The user repository is [Legender134/spatialcf](https://github.com/Legender134/spatialcf). Current `main` contains these features. `v0.1.1` is a historical annotated tag without all new interfaces, not a PyPI publication. Package metadata remains `0.1.1`; record `git rev-parse HEAD` for reproducibility. This workflow creates no new tag or GitHub Release.
 
 - [Installation](docs/installation.md)
-- [Quick start](docs/quickstart.md)
-- [Concepts](docs/concepts.md)
+- [Quick start and outcome interpretation](docs/quickstart.md)
+- [Concepts and proof limits](docs/concepts.md)
 - [Adapters](docs/adapters.md)
 - [Python API](docs/api.md)
 
-SpatialCF is licensed under the [Apache License 2.0](LICENSE).
+SpatialCF is licensed under [Apache License 2.0](LICENSE).
