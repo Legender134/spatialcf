@@ -35,6 +35,8 @@ Continue with the [CPU quick start](docs/quickstart.md) for multi-body, infeasib
 | Edit multiple bodies, 3D poses, joints and contacts | M6 finite exact box models, joint forests, ordered edit sets, prefix and commutativity checks |
 | Batch, export and independently verify M5/M6 data | `spatialcf general generate/verify/inspect`; only certified pairs are published |
 
+Current chain: domain/core → adapter protocol → generation → fresh verification. The core owns solving and proofs; adapters translate platform facts; generation and verification consume versioned artifacts.
+
 Proofs cover the declared model and authorized domain. M6 global optimality/UNSAT requires exhaustive finite-universe coverage and independent checking. Unclosed continuous domains, exhausted budgets and weak backend claims cannot establish UNSAT. A feasible witness does not establish optimality.
 
 Swept paths, dynamics, physical stability, arbitrary meshes and closed-loop joints are outside this scope. CPU facts are not authenticated native observations. Schema, solvers and verification are platform-neutral; the Unity/AI2-THOR Adapter connects the native runtime.

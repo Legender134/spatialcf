@@ -35,6 +35,8 @@ spatialcf general inspect dataset
 | 多物体三维姿态、关节与接触修改 | M6；有限精确盒体模型、关节森林、有序 edit set、每步前缀与交换性检查 |
 | 批量生成、导出、独立验证 M5/M6 数据 | `spatialcf general generate/verify/inspect`；仅认证结果发布成对样本 |
 
+当前链路：domain/core → adapter protocol → generation → fresh verification。核心负责求解与证明，Adapter 转换平台事实，生成与验证消费版本化产物。
+
 证明只覆盖声明的模型和授权域。M6 的全域最优性/UNSAT 要求穷尽有限程序全集并通过独立 checker；连续域未封闭、资源耗尽、弱后端结果不能冒充 UNSAT。可行 witness 不等于已证最优。
 
 当前不证明完整搬运路径、动力学、物理稳定性，也不支持任意网格和闭环关节。CPU 场景事实不是 native 观测认证。Schema、求解器与验证逻辑是平台无关设计；Unity/AI2-THOR Adapter 负责连接原生运行时。
