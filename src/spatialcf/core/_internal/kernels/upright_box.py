@@ -3001,15 +3001,9 @@ def _is_static_world_box_v4(value: ContinuousYawBoxBoundsV4) -> bool:
 
 
 def _continuous_visibility_dto_types_v4() -> tuple[type[object], type[object]]:
-    """Load real sibling DTO identities only after this owner has initialized.
+    """Return the shared DTO identities, rejecting module/name lookalikes."""
 
-    ``projected_visibility`` imports this owner during its own module setup, so
-    a module-level import would recreate that cycle.  Evaluation happens after
-    both kernel modules are usable; this lazy import preserves the ownership
-    boundary while rejecting module/name lookalikes.
-    """
-
-    from spatialcf.core._internal.kernels.projected_visibility import (
+    from spatialcf.core._internal.kernels.visibility_contracts import (
         ContinuousYawVisibilityBoundsV4,
         ContinuousYawVisibilityOutcomeV4,
     )

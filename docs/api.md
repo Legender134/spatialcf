@@ -1,5 +1,46 @@
 # Python API
 
+## General counterfactual datasets
+
+`spatialcf/general-counterfactual-dataset@1` is an explicit CPU M5/M6 dataset
+format. Supply immutable `PlacementSnapshot` / `RigidSnapshot` facts and typed
+`PlacementTask` / `RigidTask` specifications through `GeneralDatasetInput` in
+`spatialcf.domain.general_dataset`. It constructs requests and freezes all
+tasks before any backend search. Split grouping uses the supplied `scene_id`.
+Sources must exactly match referenced source IDs; rigid goals are nonconstant.
+
+```python
+from pathlib import Path
+from spatialcf.generation.general import (
+    generate_general_dataset, verify_general_dataset, inspect_general_dataset,
+)
+
+report = generate_general_dataset(Path("input.json"), Path("dataset"))
+assert verify_general_dataset(Path("dataset")) == report
+assert inspect_general_dataset(Path("dataset")) == report
+```
+
+Create an example input with `python examples/general_dataset.py input.json`.
+It contains a floor-to-table placement and a two-body prismatic joint/contact
+transition. Add `--output dataset` to generate and independently replay it.
+These real proof checks can take minutes on CPU. Input/output paths must be new.
+
+The seven canonical files retain input, frozen catalog, every terminal outcome,
+certified pairs, report, exact runtime provenance and a byte inventory manifest.
+Only certified solutions publish false-before/true-after pairs. Original claim,
+objective bounds, full endpoint/program and proof lineage are retained.
+`PROVEN_UNSAT`, `UNKNOWN` and `NONCERTIFIED_WITNESS` remain distinct terminals;
+there is no filtering or backfill. Verification rebuilds requests and invokes
+independent proof checkers on retained submissions without backend search.
+
+This route certifies the supplied finite models and authorized domains. It does
+not import meshes, capture images, authenticate native observations or prove
+execution paths/dynamics. Continuous unsupported domains remain UNKNOWN or
+noncertified witnesses. Existing v2/M2 and M4 artifact formats retain their own
+entry points. No native runtime or GPU is used. Exact source/interpreter and
+dependency provenance is required for replay; a changed runtime cannot verify
+an older bundle by silently rewriting its provenance.
+
 The supported version-free API is exported from `spatialcf.generation`.
 
 ## Advanced planar-translate compatibility

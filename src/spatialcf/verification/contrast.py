@@ -7,6 +7,8 @@ checker replay remain owned by the generation workflow.
 
 from __future__ import annotations
 
+from spatialcf.verification.artifact_models import _parse_exact
+
 import hashlib
 import os
 import re
@@ -133,17 +135,6 @@ class SemanticContrastBundle:
         return value
 
 
-def _parse_exact(payload: bytes, model_type: type[HashBoundCanonicalModel]):
-    try:
-        value = model_type.model_validate_json(payload, strict=False)
-    except Exception as error:
-        raise ValueError(f"invalid {model_type.__name__} JSON") from error
-    if canonical_json_bytes(value) != payload:
-        raise ValueError(f"noncanonical {model_type.__name__} bytes")
-    return model_type.model_validate(
-        value.model_dump(mode="python", warnings="error", round_trip=True),
-        strict=True,
-    )
 
 
 def _semantic_sha(value: HashBoundCanonicalModel) -> str:

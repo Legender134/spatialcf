@@ -2,6 +2,11 @@
 
 # SpatialCF
 
+The opt-in `spatialcf general` route builds, exports and independently verifies
+CPU M5/M6 datasets from explicit scene snapshots. Placement and multi-body
+joint/contact tasks retain every terminal outcome; only certified solutions
+become before/after pairs. See [the example and limits](docs/api.md#general-counterfactual-datasets).
+
 SpatialCF generates verified spatial counterfactual datasets. Current chain: domain/core → adapter protocol → generation → fresh verification. It freezes requests from scene observations, plans single-object planar moves with a minimum-cost solver, connects platform facts and Canonical Edits through the Adapter protocol, and freshly verifies the results and dataset files.
 
 The Schema, solver, and verification logic are platform-neutral. Unity/AI2-THOR

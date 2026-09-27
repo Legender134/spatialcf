@@ -2,6 +2,11 @@
 
 # SpatialCF
 
+M5/M6 的显式 CPU 场景快照可通过新的 `spatialcf general` 入口批量生成、导出和
+独立验证反事实数据集。支持 placement 与多物体关节/contact 任务；仅认证解生成
+前后场景对，UNSAT、UNKNOWN 和非认证 witness 全部保留。见
+[示例与边界](docs/api.md#general-counterfactual-datasets)。
+
 SpatialCF 用于生成经过验证的空间反事实数据集。当前链路：domain/core → adapter protocol → generation → fresh verification。它从场景观测中冻结请求，使用最小代价求解器规划单物体平面移动，由 Adapter protocol 将平台事实和 Canonical Edit 接入 generation，再对结果和数据集文件重新验证。
 
 Schema、求解器和验证逻辑均为平台无关设计。Unity/AI2-THOR 是首个 Adapter，只负责把

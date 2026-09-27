@@ -1028,7 +1028,7 @@ def compile_strict_convex_candidate_domain_v2_5(
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Warning)
-            from spatialcf.core._internal.compilation.candidate_cells import (
+            from spatialcf.core._internal.compilation.universe import (
                 _compile_search_universe,
                 _SearchUniverseFailureV2,
             )
@@ -1924,7 +1924,7 @@ def compile_multi_obstacle_strict_convex_candidate_domain_v2_6(
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Warning)
-            from spatialcf.core._internal.compilation.candidate_cells import (
+            from spatialcf.core._internal.compilation.universe import (
                 _compile_search_universe,
                 _SearchUniverseFailureV2,
             )

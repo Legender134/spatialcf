@@ -125,5 +125,40 @@ def inspect(
     typer.echo(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+general_app = typer.Typer(no_args_is_help=True, help="CPU M5/M6 counterfactual datasets.")
+app.add_typer(general_app, name="general")
+
+
+@general_app.command("generate")
+def general_generate(
+    input_path: Annotated[Path, typer.Option("--input", dir_okay=False)],
+    output: Annotated[Path, typer.Option(file_okay=False)],
+    verbose: Annotated[bool, typer.Option("--verbose")] = False,
+) -> None:
+    """Freeze tasks, solve, replay and publish a general dataset."""
+    from spatialcf.generation.general import generate_general_dataset
+
+    report = _run(lambda: generate_general_dataset(input_path, output), verbose=verbose)
+    typer.echo(report.model_dump_json(indent=2))
+
+
+@general_app.command("verify")
+def general_verify(dataset: Path, verbose: Annotated[bool, typer.Option("--verbose")] = False) -> None:
+    """Rebuild requests and check retained proofs without backend search."""
+    from spatialcf.generation.general import verify_general_dataset
+
+    report = _run(lambda: verify_general_dataset(dataset), verbose=verbose)
+    typer.echo(report.model_dump_json(indent=2))
+
+
+@general_app.command("inspect")
+def general_inspect(dataset: Path, verbose: Annotated[bool, typer.Option("--verbose")] = False) -> None:
+    """Summarize a general dataset after fresh proof verification."""
+    from spatialcf.generation.general import inspect_general_dataset
+
+    report = _run(lambda: inspect_general_dataset(dataset), verbose=verbose)
+    typer.echo(report.model_dump_json(indent=2))
+
+
 if __name__ == "__main__":
     app()
