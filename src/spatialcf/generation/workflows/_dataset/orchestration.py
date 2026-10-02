@@ -113,6 +113,10 @@ def _load_or_build_source_plan(
     expected_policy = planning.build_default_source_policy(compilation)
     if root.exists():
         plan = planning.load_source_plan(root)
+        if plan.source_policy.policy_version == "competition-native-source-policy:2.9.14":
+            expected_policy = planning.build_default_source_policy(
+                compilation, candidate_strategy=plan.source_policy.endpoint_candidate_strategy,
+            )
     else:
         planned = _plan_source_campaign_with_transitions(
             compilation,

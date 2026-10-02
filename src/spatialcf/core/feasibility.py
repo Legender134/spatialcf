@@ -1,5 +1,5 @@
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from shapely.affinity import translate
 from shapely.geometry import GeometryCollection, MultiPoint, MultiPolygon, Polygon, box
@@ -19,6 +19,27 @@ PolygonalGeometry = Polygon | MultiPolygon
 DISK_POLYGON_SIDES = 128
 GEOMETRY_EPS = 1e-9
 _MAX_SCALE_CORRECTIONS = 256
+
+
+def _translation_collision_screen(
+    scene: Scene, subject: SceneObject,
+) -> Callable[[float, float], bool]:
+    """Prepare a coarse fixed-Z/orientation proposal screen, never a proof.
+
+    Arguments to the returned callable are XY translation deltas. Geometry and
+    obstacle order belong to this scene only. The full feasibility and proof
+    owners must still check every candidate admitted by this floating screen.
+    """
+    footprint = obb_footprint(subject.obb)
+    obstacles = tuple(obb_footprint(obj.obb) for obj in scene.objects
+                      if obj.object_id not in (subject.object_id, subject.support_object_id)
+                      and obb_z_overlap_depth(subject.obb, obj.obb) > 1e-9)
+
+    def collides(dx: float, dy: float) -> bool:
+        moved = translate(footprint, xoff=dx, yoff=dy)
+        return any(moved.intersection(shape).area > 1e-9 for shape in obstacles)
+
+    return collides
 
 
 def _polygonal(geometry: BaseGeometry) -> PolygonalGeometry:

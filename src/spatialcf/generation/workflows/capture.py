@@ -405,6 +405,9 @@ def _capture_selected_camera_source(
                 runtime_identity,
                 normalized_scene,
                 observation,
+                **({"fact_version": "competition-native-source-view-fact:2.9.6"}
+                   if runtime_identity.coordinate_transform_version ==
+                   "ai2thor-native-xzy-to-rh-z-up-world-aabb-grid-v2" else {}),
             )
         except (SourceViewFactError, TypeError, ValueError):
             return (

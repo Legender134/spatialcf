@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from spatialcf.generation.request_selection import SELECTED_ROSTER_POLICY
+
 import hashlib
+import json
 import os
 import stat
 import warnings
@@ -465,11 +468,17 @@ def _read_policy_fd(descriptor: int, entries) -> tuple[RosterPolicy, str]:
         _POLICY_MAX_BYTES,
         expected_stat=entries["policy.json"],
     )
+    try:
+        decoded = json.loads(payload)
+    except (ValueError, UnicodeError):
+        decoded = None
+    observed = decoded.get("policy_version") if type(decoded) is dict else None
     require_wire_version(
         payload,
         artifact_kind="candidate roster policy",
         field="policy_version",
-        expected="competition-native-candidate-roster-policy:2.9.4",
+        expected=(SELECTED_ROSTER_POLICY if observed == SELECTED_ROSTER_POLICY
+                  else "competition-native-candidate-roster-policy:2.9.4"),
     )
     policy = RosterPolicy.model_validate_json(payload, strict=True)
     if payload != _json_line(policy):

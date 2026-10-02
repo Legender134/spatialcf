@@ -12,12 +12,19 @@ from spatialcf.domain.request import InterventionSpec, Relation
 from spatialcf.domain.scene import OBB, Scene, Vec3
 from spatialcf.domain.serialization import canonical_sha256
 from spatialcf.generation.capture.models import SourceViewFact
+from spatialcf.generation.capture._models.constants import _source_view_policy
 from spatialcf.generation.planning.models import (
     _SOURCE_VIEW_GUARD_HASH_DOMAIN,
+    ProxyBinding,
     SourceViewGuard,
     SourceViewObjectProxy,
+    _object_id,
 )
 from spatialcf.relations.engine import RelationEngine, ground_gap
+from spatialcf.verification.integrity import competition_legacy_sha256
+from spatialcf.generation.planning.native_versions import (
+    LEGACY_GUARD, PERSISTENT_GUARD, hash_domain,
+)
 
 _QUANTIZATION_M = 1e-5
 
@@ -115,11 +122,29 @@ def _ray_hits_obb_before(
     endpoint: np.ndarray,
     obb: OBB,
 ) -> bool:
+    return _ray_hits_prepared_obb_before(endpoint, _prepare_ray_obb(origin, obb))
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _PreparedRayObb:
+    origin: np.ndarray
+    rotation: np.ndarray
+    half: np.ndarray
+    local_origin: np.ndarray
+
+
+def _prepare_ray_obb(origin: np.ndarray, obb: OBB) -> _PreparedRayObb:
     rotation = _rotation(obb)
     center = np.asarray((obb.center.x, obb.center.y, obb.center.z), dtype=np.float64)
     half = np.asarray((obb.extent.x, obb.extent.y, obb.extent.z), dtype=np.float64) / 2
     local_origin = rotation.T @ (origin - center)
-    local_direction = rotation.T @ (endpoint - origin)
+    return _PreparedRayObb(origin, rotation, half, local_origin)
+
+
+def _ray_hits_prepared_obb_before(endpoint: np.ndarray, prepared: _PreparedRayObb) -> bool:
+    local_origin = prepared.local_origin
+    half = prepared.half
+    local_direction = prepared.rotation.T @ (endpoint - prepared.origin)
     lower, upper = 0.0, 1.0
     for axis in range(3):
         direction = float(local_direction[axis])
@@ -202,9 +227,10 @@ def _guard(
     target_satisfied: bool,
     old_relation_satisfied: bool,
     reasons: tuple[str, ...],
+    guard_version: str = LEGACY_GUARD,
 ) -> SourceViewGuard:
     payload = {
-        "guard_version": "competition-native-source-view-guard:2.9.5",
+        "guard_version": guard_version,
         "status": "PASSED" if not reasons else "UNCERTIFIED",
         "source_view_fact_sha256": fact.source_view_fact_sha256,
         "semantic_problem_sha256": semantic_problem_sha256,
@@ -220,7 +246,7 @@ def _guard(
     return SourceViewGuard(
         **payload,
         source_view_guard_sha256=canonical_sha256(
-            payload, domain=_SOURCE_VIEW_GUARD_HASH_DOMAIN
+            payload, domain=hash_domain(guard_version)
         ),
     )
 
@@ -283,9 +309,75 @@ def evaluate_source_view_guard(
     *,
     semantic_problem_sha256: str,
     solve_result_sha256: str,
+    proxy_binding: ProxyBinding | None = None,
+    guard_version: str = LEGACY_GUARD,
 ) -> SourceViewGuard:
     """Evaluate one bound endpoint without importing a platform adapter."""
 
+    if guard_version == PERSISTENT_GUARD:
+        from spatialcf.generation.planning.reference_persistence import reference_proxy
+
+        legacy = _evaluate_sampled_guard(
+            scene, intervention, fact, edit,
+            semantic_problem_sha256=semantic_problem_sha256,
+            solve_result_sha256=solve_result_sha256, proxy_binding=proxy_binding,
+            guard_version=PERSISTENT_GUARD,
+        )
+        reasons = list(legacy.reasons)
+        reference = legacy.reference
+        try:
+            reference = reference_proxy(scene, intervention, fact, edit)
+        except (ValueError, ArithmeticError) as error:
+            reasons.append("coverage:reference:persistence_unsupported")
+        else:
+            reasons = [reason for reason in reasons
+                       if not reason.startswith("visibility:reference:")
+                       and reason != f"coverage:{intervention.reference_id}:empty"
+                       and not reason.startswith("relation:")]
+        subject = scene.object_by_id(intervention.subject_id)
+        reference_object = scene.object_by_id(intervention.reference_id)
+        moved = _translated_obb(subject.obb, edit.translation_xy_m.x, edit.translation_xy_m.y)
+        target, _ = _definite_relation(intervention.relation_after, legacy.subject, reference,
+                                      scene, moved, reference_object.obb)
+        _, old_false = _definite_relation(intervention.relation_before, legacy.subject, reference,
+                                         scene, moved, reference_object.obb)
+        if reference.visible_fraction_lower < RelationEngine.MIN_VISIBLE_FRACTION:
+            reasons.append("visibility:reference:visible_fraction")
+        if reference.image_area_fraction_lower < RelationEngine.MIN_IMAGE_AREA_FRACTION:
+            reasons.append("visibility:reference:image_area_fraction")
+        if reference.truncated_fraction_upper > RelationEngine.MAX_TRUNCATED_FRACTION:
+            reasons.append("visibility:reference:truncated_fraction")
+        if not target:
+            reasons.append("relation:target_not_definite")
+        if not old_false:
+            reasons.append("relation:old_not_definitely_false")
+        return _guard(
+            fact=fact, semantic_problem_sha256=semantic_problem_sha256,
+            solve_result_sha256=solve_result_sha256, edit=edit, subject=legacy.subject,
+            reference=reference, target_relation=intervention.relation_after,
+            target_satisfied=target, old_relation_satisfied=not old_false,
+            reasons=tuple(reasons), guard_version=guard_version,
+        )
+    if guard_version != LEGACY_GUARD:
+        raise ValueError("unsupported source-view guard version")
+
+    if type(fact) is not SourceViewFact:
+        raise TypeError("source-view fact must be exact")
+    if fact.fact_version != "competition-native-source-view-fact:2.9.5":
+        raise ValueError("legacy source-view guard requires legacy fact")
+    return _evaluate_sampled_guard(
+        scene, intervention, fact, edit,
+        semantic_problem_sha256=semantic_problem_sha256,
+        solve_result_sha256=solve_result_sha256, proxy_binding=proxy_binding,
+        guard_version=LEGACY_GUARD,
+    )
+
+
+def _evaluate_sampled_guard(
+    scene, intervention, fact, edit, *, semantic_problem_sha256,
+    solve_result_sha256, proxy_binding, guard_version,
+):
+    """Shared authenticated sampled evaluator; versioned input sets its scale."""
     if type(scene) is not Scene:
         raise TypeError("source-view guard scene must be exact")
     if type(intervention) is not InterventionSpec:
@@ -303,7 +395,27 @@ def evaluate_source_view_guard(
     SourceViewFact.model_validate(fact.model_dump(mode="python"), strict=True)
     if edit.semantic_problem_sha256 != semantic_problem_sha256:
         raise ValueError("source-view edit does not bind semantic problem")
-    if edit.subject_id != intervention.subject_id:
+    expected_subject_id = intervention.subject_id
+    if proxy_binding is not None:
+        if type(proxy_binding) is not ProxyBinding:
+            raise TypeError("source-view proxy binding must be exact")
+        binding = ProxyBinding.model_validate(
+            proxy_binding.model_dump(mode="python"), strict=True
+        )
+        if (
+            binding.semantic_problem_sha256 != semantic_problem_sha256
+            or binding.native_scene_id != scene.scene_id
+            or binding.native_camera_id != intervention.camera_id
+            or binding.subject_native_object_id != intervention.subject_id
+            or binding.reference_native_object_id != intervention.reference_id
+            or binding.legacy_scene_sha256 != competition_legacy_sha256(scene)
+            or binding.intervention_sha256 != competition_legacy_sha256(intervention)
+        ):
+            raise ValueError("source-view proxy binding does not bind scene/intervention")
+        # The proxy has its own object namespace. Keep the certified edit and
+        # its digest intact; sampled scene facts still use the native IDs.
+        expected_subject_id = _object_id(binding.subject_native_object_id)
+    if edit.subject_id != expected_subject_id:
         raise ValueError("source-view edit does not bind intervention subject")
     if intervention.camera_id != "main":
         raise ValueError("source-view guard requires the main camera")
@@ -390,8 +502,10 @@ def evaluate_source_view_guard(
             target_satisfied=False,
             old_relation_satisfied=True,
             reasons=("projection:camera_transform_invalid",),
+            guard_version=guard_version,
         )
 
+    quantum, _, _ = _source_view_policy(fact.fact_version)
     dx, dy = edit.translation_xy_m.x, edit.translation_xy_m.y
     moved_subject_obb = _translated_obb(subject_object.obb, dx, dy)
     obbs = {
@@ -400,6 +514,17 @@ def evaluate_source_view_guard(
         )
         for item in scene.objects
     }
+    prepared_obbs: dict[str, _PreparedRayObb] = {}
+
+    def ray_hits(corner: np.ndarray, blocker_id: str, blocker: OBB) -> bool:
+        prepared = prepared_obbs.get(blocker_id)
+        if prepared is None:
+            # Lazy preparation preserves the original validation/error order.
+            # Frames belong only to this guard, including its moved subject.
+            prepared = _prepare_ray_obb(camera_origin, blocker)
+            prepared_obbs[blocker_id] = prepared
+        return _ray_hits_prepared_obb_before(corner, prepared)
+
     projected: list[_ProjectedSample] = []
     for row in fact.objects:
         obj = scene.object_by_id(row.object_id)
@@ -414,9 +539,9 @@ def evaluate_source_view_guard(
             corners = tuple(
                 np.asarray(
                     (
-                        obj.position.x + translation[0] + (qx + sx * 0.5) * _QUANTIZATION_M,
-                        obj.position.y + translation[1] + (qy + sy * 0.5) * _QUANTIZATION_M,
-                        obj.position.z + (qz + sz * 0.5) * _QUANTIZATION_M,
+                        obj.position.x + translation[0] + (qx + sx * 0.5) * quantum,
+                        obj.position.y + translation[1] + (qy + sy * 0.5) * quantum,
+                        obj.position.z + (qz + sz * 0.5) * quantum,
                     ),
                     dtype=np.float64,
                 )
@@ -439,7 +564,7 @@ def evaluate_source_view_guard(
                 continue
             try:
                 blocked = any(
-                    _ray_hits_obb_before(camera_origin, corner, blocker)
+                    ray_hits(corner, blocker_id, blocker)
                     for corner in corners
                     for blocker_id, blocker in obbs.items()
                     if blocker_id != row.object_id
@@ -552,6 +677,7 @@ def evaluate_source_view_guard(
         target_satisfied=target_true,
         old_relation_satisfied=old_satisfied,
         reasons=tuple(reasons),
+        guard_version=guard_version,
     )
 
 

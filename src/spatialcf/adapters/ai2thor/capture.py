@@ -20,6 +20,13 @@ from spatialcf.adapters.ai2thor.conversion import (
     _rotation_matrix,
     ai2thor_camera_world_to_camera,
 )
+from spatialcf.adapters.ai2thor.geometry_policy import (
+    LEGACY_GEOMETRY,
+    WORLD_AABB_GEOMETRY,
+    geometry_transform_version,
+    inward_room,
+    world_aabb,
+)
 from spatialcf.adapters.ai2thor.models import (
     _TELEPORT_VERTICAL_GUARD_M,
     AI2ThorAgentPose,
@@ -280,6 +287,20 @@ def _projected_bounds(
     xs, ys = zip(*projected)
     return min(xs), min(ys), max(xs), max(ys)
 
+def _half_open_detection_bounds(values: np.ndarray, mask: Any) -> np.ndarray:
+    """Translate native inclusive bounds only when the same mask proves them."""
+    if not isinstance(mask, np.ndarray) or mask.ndim != 2 or mask.dtype != np.bool_:
+        return values
+    rows = np.flatnonzero(np.any(mask, axis=1))
+    columns = np.flatnonzero(np.any(mask, axis=0))
+    if not rows.size or not columns.size:
+        return values
+    inclusive = np.asarray([columns[0], rows[0], columns[-1], rows[-1]])
+    if not np.array_equal(values, inclusive):
+        return values
+    return values + np.asarray([0.0, 0.0, 1.0, 1.0])
+
+
 def _view(
     self,
     metadata: dict[str, Any],
@@ -298,6 +319,7 @@ def _view(
     values = np.asarray(detection, dtype=float)
     if values.shape != (4,) or not np.isfinite(values).all():
         raise AI2ThorNativeReturnError(f"invalid detection for {object_id!r}")
+    values = _half_open_detection_bounds(values, mask)
     xmin, ymin, xmax, ymax = (float(value) for value in values)
     if xmax <= xmin or ymax <= ymin:
         if metadata.get("visible") is False:
@@ -417,7 +439,11 @@ def _object(
         category = metadata["objectType"]
     except (KeyError, TypeError, ValueError) as exc:
         raise AI2ThorNativeReturnError("invalid AI2-THOR object metadata") from exc
-    obb = self._oriented_bounds(metadata, position, rotation)
+    obb = (
+        world_aabb(metadata)
+        if self.geometry_policy == WORLD_AABB_GEOMETRY
+        else self._oriented_bounds(metadata, position, rotation)
+    )
     parents = metadata["parentReceptacles"]
     parents = [parent for parent in parents if parent not in structural_object_ids]
     return SceneObject(
@@ -533,7 +559,7 @@ def _scene_from_event(self, scene_id: str, event: Any) -> Scene:
     return Scene(
         scene_id=scene_id,
         source="ai2thor",
-        room_polygon_xy=(
+        room_polygon_xy=inward_room(scene_bounds) if self.geometry_policy == WORLD_AABB_GEOMETRY else (
             Vec2(x=center.x - half_x, y=center.y - half_y),
             Vec2(x=center.x + half_x, y=center.y - half_y),
             Vec2(x=center.x + half_x, y=center.y + half_y),
@@ -556,8 +582,14 @@ def _stable_observed_scene(
     cls,
     source: Scene,
     observed: Scene,
+    *,
+    geometry_policy: str = LEGACY_GEOMETRY,
 ) -> Scene:
     """Map native ID churn back to source IDs through unique object names."""
+    geometry_transform_version(geometry_policy)
+    if (geometry_policy == WORLD_AABB_GEOMETRY
+            and source.room_polygon_xy != observed.room_polygon_xy):
+        raise AI2ThorNativeReturnError("observed inward room domain changed")
     source_by_name = cls._objects_by_name(source.objects)
     observed_by_name = cls._objects_by_name(observed.objects)
     if set(source_by_name) != set(observed_by_name):
@@ -613,9 +645,13 @@ def _canonical_camera_observed_scene(
     cls,
     source: Scene,
     native_observed: Scene,
+    *,
+    geometry_policy: str = LEGACY_GEOMETRY,
 ) -> Scene:
     """Retain fresh camera/views after proving source geometry unchanged."""
-    stable = cls._stable_observed_scene(source, native_observed)
+    stable = cls._stable_observed_scene(
+        source, native_observed, geometry_policy=geometry_policy,
+    )
     cls._validate_camera_object_invariants(source, stable)
     stable_by_name = cls._objects_by_name(stable.objects)
     return source.model_copy(
@@ -741,13 +777,61 @@ def _stable_instance_colors(
         stable_by_native[metadata["objectId"]] = obj.object_id
     counts = self._stable_instance_pixel_counts(scene, event)
     masks = event.instance_masks
-    if any(
-        native_id not in all_native_ids and np.count_nonzero(mask) > 0
+    render_only_ids = {
+        native_id
         for native_id, mask in masks.items()
-    ):
-        raise AI2ThorNativeReturnError(
-            "observation returned unknown instance colors"
-        )
+        if native_id not in all_native_ids and np.count_nonzero(mask) > 0
+    }
+    if render_only_ids:
+        # iTHOR's renderer palette also contains non-SimObj meshes (walls,
+        # trim, etc.) absent from objects metadata. Bind these pixels to the
+        # same event's raw palette; they never become Canonical objects or
+        # collision/support facts. Unregistered or inconsistent masks fail.
+        raw_palette = event.metadata.get("colors")
+        if type(raw_palette) is not list:
+            raise AI2ThorNativeReturnError(
+                "observation returned unknown instance colors"
+            )
+        palette: dict[str, tuple[int, int, int]] = {}
+        palette_owners: dict[tuple[int, int, int], set[str]] = {}
+        for row in raw_palette:
+            if type(row) is not dict:
+                raise AI2ThorNativeReturnError("invalid raw instance colors")
+            name, channels = row.get("name"), row.get("color")
+            if (
+                type(name) is not str
+                or not name
+                or (name in palette and ("|" in name or name in all_native_ids))
+                or type(channels) is not list
+                or len(channels) != 3
+                or any(type(value) is not int or not 0 <= value <= 255 for value in channels)
+            ):
+                raise AI2ThorNativeReturnError("invalid raw instance colors")
+            palette[name] = tuple(channels)
+            # Native palettes also carry repeated class labels without |.
+            # Their rows are not instance identities, but their colors must
+            # not alias a renderer instance that we accept below.
+            palette_owners.setdefault(tuple(channels), set()).add(name)
+        claimed_colors = {colors[key] for key in all_native_ids if key in colors}
+        instance = np.asarray(event.instance_segmentation_frame)
+        for native_id in sorted(render_only_ids):
+            color = colors.get(native_id)
+            if (
+                "|" not in native_id
+                or color is None
+                or palette.get(native_id) != color
+                or palette_owners.get(color) != {native_id}
+                or color in claimed_colors
+            ):
+                raise AI2ThorNativeReturnError(
+                    "observation returned unknown or ambiguous instance colors"
+                )
+            png_mask = np.all(instance == np.asarray(color, dtype=np.uint8), axis=2)
+            if not np.array_equal(png_mask, masks[native_id]):
+                raise AI2ThorNativeReturnError(
+                    "observation instance colors disagree with PNG"
+                )
+            claimed_colors.add(color)
     stable_colors: dict[str, tuple[int, int, int]] = {}
     native_by_stable = {
         stable_id: native_id for native_id, stable_id in stable_by_native.items()
@@ -941,6 +1025,11 @@ def render_assets(
 
 # fmt: on
 class AI2ThorCaptureMixin:
+    @property
+    def geometry_policy(self) -> str:
+        geometry_transform_version(self._geometry_policy)
+        return self._geometry_policy
+
     _camera = _camera
     _oriented_bounds = staticmethod(_oriented_bounds)
     _obb_corners = staticmethod(_obb_corners)
@@ -1102,6 +1191,7 @@ class AI2ThorCaptureMixin:
             source_room_id=None if source is None else source.room_id,
             source_floor_xz_bounds=(None if source is None else source.floor_xz_bounds),
             teleport_vertical_guard_m=_TELEPORT_VERTICAL_GUARD_M,
+            coordinate_transform_version=geometry_transform_version(self.geometry_policy),
         )
 
     def latest_native_event(self, scene_id: str) -> Any:

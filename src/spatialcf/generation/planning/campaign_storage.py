@@ -21,6 +21,7 @@ from spatialcf.domain.serialization import (
 from spatialcf.generation.errors import (
     require_wire_version,
 )
+from spatialcf.generation.planning.native_versions import require_planning_wire
 
 from spatialcf.verification.filesystem import (
     CompetitionNativePublicationError,
@@ -53,7 +54,7 @@ from spatialcf.generation.planning.campaign_contracts import (
 def _parse_source_plan(payload: bytes) -> SourcePlan:
     """Parse only the current plan after the caller's version preflight."""
 
-    require_wire_version(
+    require_planning_wire(
         payload,
         artifact_kind="source plan",
         field="plan_version",
@@ -78,7 +79,7 @@ def _load_source_policy_fd(
     payload = read_regular_at(
         descriptor, name, _MAX_POLICY_BYTES, expected_stat=expected_stat
     )
-    require_wire_version(
+    require_planning_wire(
         payload,
         artifact_kind="source policy",
         field="policy_version",
@@ -111,7 +112,7 @@ def _load_source_plan_fd(descriptor: int) -> SourcePlan:
         _MAX_PLAN_BYTES,
         expected_stat=entries["plan.json"],
     )
-    require_wire_version(
+    require_planning_wire(
         payload,
         artifact_kind="source plan",
         field="plan_version",

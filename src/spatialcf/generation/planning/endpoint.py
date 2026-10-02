@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import numpy as np
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Literal
@@ -16,6 +17,7 @@ from spatialcf.core.feasibility import (
     FeasibleRegionBuilder,
     _center_locus,
     _relative_vertices,
+    _translation_collision_screen,
     subject_position_region_geometry,
 )
 from spatialcf.core.solver import (
@@ -49,6 +51,13 @@ from spatialcf.generation.planning.problem import (
     _project_proxy_problem,
 )
 from spatialcf.generation.planning.view_guard import evaluate_source_view_guard
+from spatialcf.generation.planning.view_guard import (
+    _translated_obb, _obb_corners, _camera_point, _pixel,
+)
+from spatialcf.generation.planning.native_versions import (
+    guard_for_policy, policy_for_captures, endpoint_for_guard,
+    LEGACY_CANDIDATES, CLEAR_FIRST_CANDIDATES,
+)
 
 _DEFAULT_RADII_M = (0.02, 0.01, 0.005, 0.001)
 _NATIVE_SPAWN_RADIUS_M = 0.000001
@@ -603,6 +612,37 @@ def _bounded_current_candidate_roster(
     return tuple(result)
 
 
+def _source_clear_first_candidates(scene, subject, candidates, target_coordinates, limit):
+    """Prefer clear native target proposals; every result needs the full proof.
+
+    Floating outer-box collision and projection are proposal heuristics. They
+    neither certify feasibility nor remove a candidate from the full roster.
+    Target coordinates come only from native positions. Other native points
+    and all legacy proposals retain their old relative order after that group.
+    """
+    collides = _translation_collision_screen(scene, subject)
+    camera = scene.camera_by_id("main")
+    matrix = np.asarray(camera.world_to_camera).reshape(4, 4)
+
+    def deferred(candidate):
+        point = candidate.point
+        if (point.x, point.y) not in target_coordinates:
+            return True
+        dx, dy = float(point.x), float(point.y)
+        if collides(dx, dy):
+            return True
+        try:
+            pixels = tuple(_pixel(camera, _camera_point(matrix, corner))
+                           for corner in _obb_corners(_translated_obb(subject.obb, dx, dy)))
+        except (ArithmeticError, ValueError):
+            return True
+        xs, ys = tuple(p[0] for p in pixels), tuple(p[1] for p in pixels)
+        return not (min(xs) >= .5 and max(xs) <= camera.width - .5
+                    and min(ys) >= .5 and max(ys) <= camera.height - .5)
+
+    return tuple(sorted(candidates, key=deferred)[:limit])
+
+
 def plan_endpoint(
     scene: Scene,
     intervention: InterventionSpec,
@@ -617,6 +657,7 @@ def plan_endpoint(
     max_candidate_points: int = 64,
     max_included_collision_obstacles: int = 6,
     screening_domain_operations: int = 100_000,
+    candidate_strategy: str = LEGACY_CANDIDATES,
 ) -> EndpointPlan:
     """Return the first current solver-certified source-only endpoint."""
 
@@ -646,6 +687,8 @@ def plan_endpoint(
         )
     if type(screening_domain_operations) is not int or screening_domain_operations < 1:
         raise TypeError("screening_domain_operations must be a positive exact integer")
+    if type(candidate_strategy) is not str or candidate_strategy not in (LEGACY_CANDIDATES, CLEAR_FIRST_CANDIDATES):
+        raise ValueError("unsupported endpoint candidate strategy")
 
     prepared = _prepare_proxy(
         scene,
@@ -695,9 +738,16 @@ def plan_endpoint(
         native_points=native_points,
         legacy_points=legacy_points,
         patch_loci=patch_loci,
-        max_candidate_points=max_candidate_points,
+        max_candidate_points=(
+            len(native_points) + len(legacy_points)
+            if candidate_strategy == CLEAR_FIRST_CANDIDATES else max_candidate_points
+        ),
         target_only_relation_after_coordinates=target_coordinates,
     )
+    if candidate_strategy == CLEAR_FIRST_CANDIDATES:
+        candidates = _source_clear_first_candidates(
+            scene, subject, candidates, target_coordinates, max_candidate_points,
+        )
     if not candidates:
         raise EndpointPlanRejected(("endpoint_plan:no_single_patch_source_candidate",))
     screening_config = _screening_config(config, screening_domain_operations)
@@ -782,11 +832,14 @@ def plan_endpoint(
                 solved.result.selected_witness.edit,
                 semantic_problem_sha256=proxy.semantic_problem.semantic_problem_sha256,
                 solve_result_sha256=solved.result.solve_result_sha256,
+                proxy_binding=proxy.binding,
+                guard_version=guard_for_policy(policy_for_captures((placement.source_capture,))),
             )
             if guard.status != "PASSED":
                 reasons.add("endpoint_plan:SOURCE_VIEW_UNCERTIFIED")
                 continue
             return EndpointPlan(
+                plan_version=endpoint_for_guard(guard.guard_version),
                 planning_workspace=workspace,
                 endpoint_workspace=endpoint_workspace,
                 candidate_index=candidate_index,

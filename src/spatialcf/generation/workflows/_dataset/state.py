@@ -84,6 +84,7 @@ def _capture_plan(config: GenerationConfig) -> capture.CapturePlan:
         width=config.width,
         height=config.height,
         max_requests_total=config.max_requests,
+        fixed_request=config.fixed_request,
     )
 
 
@@ -192,6 +193,8 @@ def _config_from_capture_plan(plan: capture.CapturePlan) -> GenerationConfig:
             raise ValueError("public dataset contains a non-AI2-THOR legacy source")
         scene_names.append(locator.scene_name)
     return GenerationConfig(
+        config_version=2 if plan.roster_policy.fixed_request is not None else 1,
+        fixed_request=plan.roster_policy.fixed_request,
         adapter="ai2thor",
         scene_names=tuple(scene_names),
         split=plan.assigned_split,

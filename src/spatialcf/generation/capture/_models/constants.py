@@ -210,3 +210,28 @@ _SOURCE_VIEW_SAMPLING_POLICY_SHA256 = canonical_sha256(
     },
     domain="spatialcf.competition-native-source-view-policy.v2.9.5",
 )
+
+
+_SOURCE_VIEW_FINE_FACT_VERSION = "competition-native-source-view-fact:2.9.6"
+_SOURCE_VIEW_FINE_FACT_HASH_DOMAIN = "spatialcf.competition-native-source-view-fact.v2.9.6"
+_SOURCE_VIEW_FINE_SAMPLING_POLICY_SHA256 = canonical_sha256(
+    {
+        "local_quantization_m": 1e-6,
+        "maximum_samples": 76_800,
+        "render_proxy": "weighted_sampled_splat_z_buffer",
+        "representative": "minimum_finite_positive_depth_then_row_column",
+        "rounding": "nearest_even",
+        "tile_height": 2,
+        "tile_width": 2,
+        "weight": "object_mask_pixel_count_in_tile",
+    },
+    domain="spatialcf.competition-native-source-view-policy.v2.9.6",
+)
+
+
+def _source_view_policy(version):
+    if version == "competition-native-source-view-fact:2.9.5":
+        return 1e-5, _SOURCE_VIEW_SAMPLING_POLICY_SHA256, _SOURCE_VIEW_FACT_HASH_DOMAIN
+    if version == _SOURCE_VIEW_FINE_FACT_VERSION:
+        return 1e-6, _SOURCE_VIEW_FINE_SAMPLING_POLICY_SHA256, _SOURCE_VIEW_FINE_FACT_HASH_DOMAIN
+    raise ValueError("unsupported source-view fact version")

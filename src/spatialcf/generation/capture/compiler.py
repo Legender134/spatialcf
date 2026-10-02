@@ -271,14 +271,18 @@ def _candidate_identity(
     reference_id: str,
     relation: Relation,
     support_kind: CompetitionNativeSupportKindV2_9,
+    *,
+    selection_identity: str | None = None,
 ) -> str:
     payload = {
         "policy_sha256": policy_sha256,
         "reference_id": reference_id,
         "relation_before": relation.value,
         "scene_id": source.scene_id,
-        "source_capture_sha256": competition_native_roster_selection_identity_v2_9(
-            capture
+        "source_capture_sha256": (
+            competition_native_roster_selection_identity_v2_9(capture)
+            if selection_identity is None
+            else selection_identity
         ),
         "source_id": source.source_id,
         "split": source.split,
@@ -334,6 +338,16 @@ def _select_candidates(
         for item in candidates
         if item.reasons == ("candidate:selection_pending",)
     }
+    unselected = {}
+    if policy.fixed_request is not None:
+        matching = [item for item in pending.values() if policy.fixed_request.matches(item)]
+        if len(matching) != 1:
+            details = tuple((item.state.value, item.reasons) for item in candidates
+                            if policy.fixed_request.matches(item))
+            raise ValueError(f"fixed request needs one eligible candidate: matched={len(matching)}; facts={details}")
+        unselected = {key: item.model_copy(update={"reasons": ("candidate:fixed_request_not_selected",)})
+                      for key, item in pending.items() if not policy.fixed_request.matches(item)}
+        pending = {item.candidate_id: item for item in matching}
     grouped: dict[
         tuple[str, str, str, str, str],
         deque[CompetitionNativeCandidateInventoryV2_9],
@@ -361,6 +375,7 @@ def _select_candidates(
         for item in candidates
         if item.candidate_id not in pending
     }
+    states.update(unselected)
     relation_counts: Counter[Relation] = Counter()
     scene_counts: Counter[str] = Counter()
     subject_counts: Counter[tuple[str, str]] = Counter()
@@ -629,6 +644,9 @@ def _compile_competition_native_candidate_roster(
                     )
                 )
 
+        # This pure identity is constant for the validated, frozen source.
+        # Derive it once per compilation, not once per object/relation pair.
+        selection_identity = competition_native_roster_selection_identity_v2_9(capture)
         for subject in scene.objects:
             subject_inventory = inventory_by_id[subject.object_id]
             for reference in scene.objects:
@@ -644,6 +662,7 @@ def _compile_competition_native_candidate_roster(
                         reference.object_id,
                         relation,
                         subject_inventory.support_kind,
+                        selection_identity=selection_identity,
                     )
                     if (
                         require_scene_unique_referents

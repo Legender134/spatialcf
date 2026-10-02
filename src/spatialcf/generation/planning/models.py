@@ -21,6 +21,10 @@ from spatialcf.generation.capture.models import (
     ReceptacleSurfacePatch,
 )
 from spatialcf.relations.engine import RelationEngine
+from spatialcf.generation.planning.native_versions import (
+    LEGACY_GUARD, PERSISTENT_GUARD, LEGACY_ENDPOINT, PERSISTENT_ENDPOINT,
+    endpoint_for_guard, hash_domain,
+)
 
 _BINDING_HASH_DOMAIN = "spatialcf.competition-native-proxy-binding.v2.9.4"
 _BUNDLE_HASH_DOMAIN = "spatialcf.competition-native-proxy-bundle.v2.9.4"
@@ -68,7 +72,7 @@ class SourceViewObjectProxy(CanonicalModel):
 
 
 class SourceViewGuard(CanonicalModel):
-    guard_version: Literal["competition-native-source-view-guard:2.9.5"]
+    guard_version: Literal[LEGACY_GUARD, PERSISTENT_GUARD]
     status: Literal["PASSED", "UNCERTIFIED"]
     source_view_fact_sha256: Sha256Digest
     semantic_problem_sha256: Sha256Digest
@@ -134,7 +138,7 @@ class SourceViewGuard(CanonicalModel):
             mode="python", exclude={"source_view_guard_sha256"}
         )
         if self.source_view_guard_sha256 != canonical_sha256(
-            payload, domain=_SOURCE_VIEW_GUARD_HASH_DOMAIN
+            payload, domain=hash_domain(self.guard_version)
         ):
             raise ValueError("source-view guard digest mismatch")
         return self
@@ -463,7 +467,7 @@ class ProxyBundle(CanonicalModel):
 class EndpointPlan(CanonicalModel):
     """One current solver-certified endpoint wholly owned by a source patch."""
 
-    plan_version: Literal["competition-native-endpoint-plan:2.9.5"] = (
+    plan_version: Literal[LEGACY_ENDPOINT, PERSISTENT_ENDPOINT] = (
         "competition-native-endpoint-plan:2.9.5"
     )
     candidate_strategy: Literal[
@@ -525,6 +529,8 @@ class EndpointPlan(CanonicalModel):
             _require_sha256(value, f"endpoint plan {label}")
         if type(self.source_view_guard) is not SourceViewGuard:
             raise TypeError("endpoint plan source-view guard must be exact")
+        if self.plan_version != endpoint_for_guard(self.source_view_guard.guard_version):
+            raise ValueError("endpoint plan/guard version mismatch")
         if (
             self.source_view_guard.status != "PASSED"
             or self.source_view_guard.source_view_fact_sha256
@@ -547,7 +553,7 @@ class EndpointPlan(CanonicalModel):
 
     @property
     def endpoint_plan_sha256(self) -> str:
-        return canonical_sha256(self, domain=_ENDPOINT_PLAN_HASH_DOMAIN)
+        return canonical_sha256(self, domain=hash_domain(self.plan_version))
 
 
 def _direct_support_surface(problem: SemanticProblemV2_3, subject_object_id: str):
