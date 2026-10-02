@@ -14,6 +14,10 @@ from spatialcf.adapters.ai2thor.capture import (
 from spatialcf.adapters.ai2thor.conversion import (
     AI2ThorConversionMixin as _AI2ThorConversionMixin,
 )
+from spatialcf.adapters.ai2thor.geometry_policy import (
+    LEGACY_GEOMETRY,
+    geometry_transform_version,
+)
 from spatialcf.adapters.ai2thor.execution import (
     AI2ThorExecutionMixin as _AI2ThorExecutionMixin,
 )
@@ -93,7 +97,10 @@ class AI2ThorAdapter(
         allow_source_pose_drift: bool = False,
         procedural_scenes: Mapping[str, AI2ThorProceduralScene | AdapterProceduralScene]
         | None = None,
+        geometry_policy: str = LEGACY_GEOMETRY,
     ) -> None:
+        geometry_transform_version(geometry_policy)
+        self._geometry_policy = geometry_policy
         if type(scene_names) is not list or any(
             type(name) is not str for name in scene_names
         ):

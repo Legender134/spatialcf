@@ -413,6 +413,10 @@ class RosterCompilation(CanonicalModel):
 
     @model_validator(mode="after")
     def validate_compilation(self) -> Self:
+        if self.policy.fixed_request is not None and (
+                len(self.request_manifest.requests) != 1
+                or not self.policy.fixed_request.matches(self.request_manifest.requests[0])):
+            raise ValueError("fixed request does not bind selected manifest")
         if self.summary.selected_request_count != len(self.request_manifest.requests):
             raise ValueError("compilation request count does not close")
         if self.summary.policy_sha256 != self.policy.policy_sha256:

@@ -10,6 +10,10 @@ from typing import (
 from pydantic import (
     Field,
     model_validator,
+    model_serializer,
+)
+from spatialcf.generation.request_selection import (
+    FixedRequest, LEGACY_ROSTER_POLICY, SELECTED_ROSTER_POLICY,
 )
 
 from spatialcf.domain.base import (
@@ -108,10 +112,11 @@ class CompetitionNativeSourceRefV2_9(CanonicalModel):
 class RosterPolicy(CanonicalModel):
     """The only supported candidate-roster policy."""
 
-    policy_version: Literal["competition-native-candidate-roster-policy:2.9.4"] = (
+    policy_version: Literal[LEGACY_ROSTER_POLICY, SELECTED_ROSTER_POLICY] = (
         "competition-native-candidate-roster-policy:2.9.4"
     )
     evidence_eligible: Literal[False] = False
+    fixed_request: FixedRequest | None = None
     campaign_id: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,127}$")
     seed: int = Field(strict=True, ge=-(2**63), le=2**63 - 1)
     width: int = Field(strict=True, gt=0, le=4096)
@@ -137,6 +142,12 @@ class RosterPolicy(CanonicalModel):
 
     @model_validator(mode="after")
     def validate_policy(self) -> Self:
+        if (self.policy_version == SELECTED_ROSTER_POLICY) != (self.fixed_request is not None):
+            raise ValueError("fixed request/roster policy version mismatch")
+        if self.fixed_request is not None and (
+                self.max_requests_total != 1
+                or tuple(item.scene_id for item in self.sources) != (self.fixed_request.scene_id,)):
+            raise ValueError("fixed request requires its unique source and one request")
         if self.width * self.height > 4_194_304:
             raise ValueError("candidate roster render dimensions exceed pixel limit")
         source_ids = tuple(item.source_id for item in self.sources)
@@ -151,6 +162,13 @@ class RosterPolicy(CanonicalModel):
     @property
     def policy_sha256(self) -> Sha256Digest:
         return canonical_sha256(self, domain=_CURRENT_POLICY_HASH_DOMAIN)
+
+    @model_serializer(mode="wrap")
+    def serialize_policy(self, handler):
+        value = handler(self)
+        if self.policy_version == LEGACY_ROSTER_POLICY:
+            value.pop("fixed_request", None)
+        return value
 
 
 CompetitionNativeCandidateRosterPolicyV2_9_4 = RosterPolicy

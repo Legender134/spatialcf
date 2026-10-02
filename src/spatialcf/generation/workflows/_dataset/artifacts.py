@@ -460,7 +460,11 @@ def _verify_dataset_fd(
             source_plan_fd
         )
         source_plan = source_plan_verification.plan
-        expected_policy = planning.build_default_source_policy(compilation)
+        expected_policy = planning.build_default_source_policy(
+            compilation,
+            **({"candidate_strategy": source_plan.source_policy.endpoint_candidate_strategy}
+               if source_plan.source_policy.policy_version == "competition-native-source-policy:2.9.14" else {}),
+        )
         if (
             source_plan.source_policy != expected_policy
             or source_plan.roster_manifest != compilation.request_manifest

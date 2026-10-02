@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 from io import BytesIO
 
 import numpy as np
@@ -11,6 +12,7 @@ from PIL import Image
 from spatialcf.adapters.base import AdapterObservation
 from spatialcf.domain.scene import BBox2D, Scene
 from spatialcf.domain.serialization import canonical_sha256
+from spatialcf.generation.capture._models.constants import _source_view_policy
 from spatialcf.generation.capture.models import (
     _SOURCE_VIEW_SAMPLING_POLICY_SHA256,
     CompetitionNativeRuntimeIdentityV2_9,
@@ -113,10 +115,13 @@ def _validated_instance_colors(value: object) -> dict[str, tuple[int, int, int]]
     return dict(value)
 
 
-def _quantize_local_coordinate(value: float) -> int:
+def _quantize_local_coordinate(value: float, quantum: float = SOURCE_VIEW_QUANTIZATION_M) -> int:
     if not math.isfinite(value):
         raise SourceViewFactError("source-view local coordinate is not finite")
-    return round(value / SOURCE_VIEW_QUANTIZATION_M)
+    if quantum == 1e-6:
+        # Quantize the stored binary float exactly, including nearest-even ties.
+        return round(Fraction(value) / Fraction(quantum))
+    return round(value / quantum)
 
 
 def build_source_view_fact(
@@ -124,12 +129,19 @@ def build_source_view_fact(
     runtime_identity: CompetitionNativeRuntimeIdentityV2_9,
     scene: Scene,
     observation: AdapterObservation,
+    *,
+    fact_version: str = SOURCE_VIEW_FACT_VERSION,
 ) -> SourceViewFact:
     """Derive one deterministic weighted 2x2-tile source-view fact."""
+    quantum, sampling_policy, fact_domain = _source_view_policy(fact_version)
     if type(source) is not CompetitionNativeSourceRefV2_9:
         raise SourceViewFactError("source-view source must be exact")
     if type(runtime_identity) is not CompetitionNativeRuntimeIdentityV2_9:
         raise SourceViewFactError("source-view runtime must be exact")
+    if (fact_version == "competition-native-source-view-fact:2.9.6"
+            and runtime_identity.coordinate_transform_version !=
+            "ai2thor-native-xzy-to-rh-z-up-world-aabb-grid-v2"):
+        raise SourceViewFactError("fine source-view fact requires world-AABB geometry")
     if type(scene) is not Scene or type(observation) is not AdapterObservation:
         raise SourceViewFactError("source-view scene and observation must be exact")
     if observation.scene != scene or scene.scene_id != source.scene_id:
@@ -255,9 +267,9 @@ def build_source_view_fact(
             sample_rows.append(row)
             sample_columns.append(column)
             sample_weights.append(len(tile))
-            local_x.append(_quantize_local_coordinate(local[0]))
-            local_y.append(_quantize_local_coordinate(local[1]))
-            local_z.append(_quantize_local_coordinate(local[2]))
+            local_x.append(_quantize_local_coordinate(local[0], quantum))
+            local_y.append(_quantize_local_coordinate(local[1], quantum))
+            local_z.append(_quantize_local_coordinate(local[2], quantum))
         rows.append(
             SourceViewObjectSamples(
                 object_id=object_id,
@@ -274,7 +286,7 @@ def build_source_view_fact(
     if not rows:
         raise SourceViewFactError("source-view fact has no visible objects")
     payload = {
-        "fact_version": SOURCE_VIEW_FACT_VERSION,
+        "fact_version": fact_version,
         "source_id": source.source_id,
         "scene_id": scene.scene_id,
         "source_locator_sha256": source.source_locator_sha256,
@@ -284,10 +296,10 @@ def build_source_view_fact(
         "rgb_png_sha256": observation.rgb_png_sha256,
         "depth_npy_sha256": observation.depth_npy_sha256,
         "instance_png_sha256": observation.instance_png_sha256,
-        "sampling_policy_sha256": SOURCE_VIEW_SAMPLING_POLICY_SHA256,
+        "sampling_policy_sha256": sampling_policy,
         "objects": tuple(rows),
     }
     return SourceViewFact(
         **payload,
-        source_view_fact_sha256=canonical_sha256(payload, domain=_FACT_DOMAIN),
+        source_view_fact_sha256=canonical_sha256(payload, domain=fact_domain),
     )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from spatialcf.generation.planning.native_versions import guard_for_policy, endpoint_for_guard
+
 import hashlib
 import os
 import stat
@@ -157,6 +159,7 @@ def _batch_lineage(
             raise RuntimeError("current request subject evidence is not unique")
         subject = subjects[0]
         endpoint = EndpointPlan(
+            plan_version=endpoint_for_guard(guard_for_policy(plan.source_policy.policy_version)),
             planning_workspace=outcome.planning_workspace,
             endpoint_workspace=outcome.endpoint_workspace,
             candidate_index=outcome.endpoint_candidate_index,

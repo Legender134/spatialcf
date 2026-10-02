@@ -360,6 +360,7 @@ class AI2ThorExecutionMixin:
                     observed_scene = self._stable_observed_scene(
                         scene,
                         native_observed,
+                        geometry_policy=self.geometry_policy,
                     )
                     observation = self._observation_from_event(
                         observed_scene,
@@ -453,6 +454,7 @@ class AI2ThorExecutionMixin:
             seed=self.seed,
             controller_factory=isolated_controller_factory,
             allow_source_pose_drift=self.allow_source_pose_drift,
+            geometry_policy=self.geometry_policy,
             procedural_scenes=(
                 {source.scene_id: procedural} if procedural is not None else None
             ),
@@ -471,6 +473,7 @@ class AI2ThorExecutionMixin:
             stable_scene = child._stable_observed_scene(
                 source,
                 native_settlement.observed_scene,
+                geometry_policy=child.geometry_policy,
             )
             observation = child._observation_from_event(stable_scene, final_event)
             settlement = AI2ThorSceneSettlement(
@@ -909,7 +912,9 @@ class AI2ThorExecutionMixin:
             expected_rotations,
         )
         native_observed = self._scene_from_event(scene.scene_id, event)
-        observed_scene = self._stable_observed_scene(scene, native_observed)
+        observed_scene = self._stable_observed_scene(
+            scene, native_observed, geometry_policy=self.geometry_policy,
+        )
         commanded_scene = self._commanded_scene(
             scene,
             observed_scene,
@@ -1157,7 +1162,9 @@ class AI2ThorExecutionMixin:
             )
         else:
             immediate_native = self._scene_from_event(scene.scene_id, event)
-            immediate_observed = self._stable_observed_scene(scene, immediate_native)
+            immediate_observed = self._stable_observed_scene(
+                scene, immediate_native, geometry_policy=self.geometry_policy,
+            )
             self._current_scene = immediate_observed
             settlement = self.settle_scene_observed(
                 immediate_observed,
@@ -1181,7 +1188,9 @@ class AI2ThorExecutionMixin:
                 ),
             )
         native_observed = self._scene_from_event(scene.scene_id, event)
-        observed_scene = self._stable_observed_scene(scene, native_observed)
+        observed_scene = self._stable_observed_scene(
+            scene, native_observed, geometry_policy=self.geometry_policy,
+        )
         commanded_scene = self._commanded_scene(
             scene,
             observed_scene,

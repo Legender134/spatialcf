@@ -620,6 +620,7 @@ class AI2ThorCameraMixin:
             observed_scene = self._canonical_camera_observed_scene(
                 scene,
                 native_observed,
+                geometry_policy=self.geometry_policy,
             )
             observation = self._observation_from_event(observed_scene, event)
             result = AI2ThorCameraApplication(
@@ -697,6 +698,7 @@ class AI2ThorCameraMixin:
             paused_source = self._canonical_camera_observed_scene(
                 source,
                 native_paused,
+                geometry_policy=self.geometry_policy,
             )
             self._current_scene = paused_source
         except BaseException:
@@ -755,6 +757,7 @@ class AI2ThorCameraMixin:
                 stable_unpaused = self._stable_observed_scene(
                     retained_source,
                     native_unpaused,
+                    geometry_policy=self.geometry_policy,
                 )
                 self._validate_camera_object_identity_invariants(
                     retained_source,
@@ -846,6 +849,7 @@ class AI2ThorCameraMixin:
         stable_source = self._canonical_camera_observed_scene(
             source,
             settlement.observed_scene,
+            geometry_policy=self.geometry_policy,
         )
         self._current_scene = stable_source
         return self.apply_camera_pose_observed(stable_source, pose)

@@ -8,7 +8,8 @@ import tomllib
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, model_serializer
+from spatialcf.generation.request_selection import FixedRequest
 
 from spatialcf.verification.filesystem import (
     bound_absolute_directory,
@@ -24,7 +25,8 @@ class GenerationConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    config_version: Literal[1] = 1
+    config_version: Literal[1, 2] = 1
+    fixed_request: FixedRequest | None = None
     adapter: Literal["ai2thor"] = "ai2thor"
     scene_names: tuple[str, ...] = Field(min_length=1, max_length=32)
     split: Literal["train", "validation", "test"] = "train"
@@ -39,7 +41,19 @@ class GenerationConfig(BaseModel):
         if any(type(item) is not str or not item for item in self.scene_names):
             raise ValueError("scene_names must contain non-empty exact strings")
         object.__setattr__(self, "scene_names", tuple(sorted(set(self.scene_names))))
+        if (self.config_version == 2) != (self.fixed_request is not None):
+            raise ValueError("fixed request/config version mismatch")
+        if self.fixed_request is not None and (
+                self.scene_names != (self.fixed_request.scene_id,) or self.max_requests != 1):
+            raise ValueError("fixed request requires exactly its scene and max_requests=1")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_config(self, handler):
+        value = handler(self)
+        if self.config_version == 1:
+            value.pop("fixed_request", None)
+        return value
 
 
 def load_generation_config(path: Path) -> GenerationConfig:

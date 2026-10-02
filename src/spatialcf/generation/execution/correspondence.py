@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from spatialcf.generation.planning.native_versions import (
+    guard_for_policy, policy_for_captures, endpoint_for_guard,
+)
+
 import math
 from typing import Literal, Self
 
@@ -134,6 +138,8 @@ class RequestLineage(CanonicalModel):
         capture = self.source_capture
         evidence = self.camera_evidence
         endpoint = self.endpoint_plan
+        if endpoint.plan_version != endpoint_for_guard(guard_for_policy(policy_for_captures((capture,)))):
+            raise ValueError("native runtime/endpoint version mismatch")
         delegated = self.runtime_collision_delegated_native_object_ids
         source = capture.source
         if (

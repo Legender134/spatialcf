@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from spatialcf.generation.request_selection import (
+    FixedRequest, LEGACY_ROSTER_POLICY, SELECTED_ROSTER_POLICY,
+)
+
 import hashlib
 import os
 import warnings
@@ -580,6 +584,7 @@ def build_capture_plan(
     capture_settings: CaptureSettings | None = None,
     source_start: int = 0,
     source_stop: int | None = None,
+    fixed_request: FixedRequest | None = None,
 ) -> CapturePlan:
     """Build the current plan directly, without an earlier-version plan."""
 
@@ -611,6 +616,8 @@ def build_capture_plan(
         )
     )
     policy = RosterPolicy(
+        policy_version=SELECTED_ROSTER_POLICY if fixed_request is not None else LEGACY_ROSTER_POLICY,
+        fixed_request=fixed_request,
         campaign_id=campaign_id,
         seed=checked_manifest.seed,
         width=checked_manifest.width,
@@ -645,6 +652,7 @@ def build_legacy_capture_plan(
     width: int,
     height: int,
     max_requests_total: int,
+    fixed_request: FixedRequest | None = None,
 ) -> CapturePlan:
     """Build the current capture plan for canonical legacy AI2-THOR scenes."""
 
@@ -681,6 +689,7 @@ def build_legacy_capture_plan(
         assigned_split=assigned_split,
         campaign_id=campaign_id,
         max_requests_total=max_requests_total,
+        fixed_request=fixed_request,
     )
 
 

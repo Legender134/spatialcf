@@ -130,6 +130,12 @@ _SOURCE_POLICY_VERSION = "competition-native-source-policy:2.9.13"
 
 _SOURCE_PLAN_VERSION = "competition-native-source-plan:2.9.10"
 
+from spatialcf.generation.planning.native_versions import (
+    PERSISTENT_POLICY, PERSISTENT_PLAN, guard_for_policy, plan_for_policy,
+    policy_for_captures, endpoint_for_guard, hash_domain,
+    LEGACY_CANDIDATES, CLEAR_FIRST_CANDIDATES,
+)
+
 
 _FILES = {"plan.json", "checksums.sha256"}
 
@@ -240,7 +246,7 @@ class RuntimePosePolicy(CanonicalModel):
 class SourcePolicy(CanonicalModel):
     """The single current bounded source-campaign policy."""
 
-    policy_version: Literal[_SOURCE_POLICY_VERSION] = _SOURCE_POLICY_VERSION
+    policy_version: Literal[_SOURCE_POLICY_VERSION, PERSISTENT_POLICY] = _SOURCE_POLICY_VERSION
     evidence_eligible: Literal[False] = False
     campaign_id: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,127}$")
     roster_manifest_sha256: Sha256Digest
@@ -248,12 +254,13 @@ class SourcePolicy(CanonicalModel):
     height: int = Field(strict=True, gt=0, le=4096)
     seed: int = Field(strict=True, ge=-(2**63), le=2**63 - 1)
     max_endpoint_candidate_points: int = Field(default=64, strict=True, gt=0, le=256)
-    candidate_wall_time_seconds: Literal[60] = 60
+    candidate_wall_time_seconds: Literal[60, 600] = 60
     max_settlement_steps: int = Field(default=60, strict=True, gt=0, le=600)
     solver_config: ContinuousYawSolverConfigV2_9
     endpoint_candidate_strategy: Literal[
         "CAMERA_SELECTED_CAPTURE_BOUND_NATIVE_REPLAY_PARALLEL_PATCH_"
-        "RELATION_RANKED_RUNTIME_COLLISION_DELEGATED_BBOX_VISIBILITY"
+        "RELATION_RANKED_RUNTIME_COLLISION_DELEGATED_BBOX_VISIBILITY",
+        CLEAR_FIRST_CANDIDATES,
     ] = (
         "CAMERA_SELECTED_CAPTURE_BOUND_NATIVE_REPLAY_PARALLEL_PATCH_"
         "RELATION_RANKED_RUNTIME_COLLISION_DELEGATED_BBOX_VISIBILITY"
@@ -274,13 +281,18 @@ class SourcePolicy(CanonicalModel):
 
     @model_validator(mode="after")
     def validate_policy(self) -> Self:
+        if self.policy_version != PERSISTENT_POLICY and self.endpoint_candidate_strategy != LEGACY_CANDIDATES:
+            raise ValueError("legacy policy requires legacy candidate strategy")
+        expected_wall_time = 600 if self.policy_version == PERSISTENT_POLICY else 60
+        if self.candidate_wall_time_seconds != expected_wall_time:
+            raise ValueError("native policy wall time/version mismatch")
         if self.width * self.height > 4_194_304:
             raise ValueError("native source render policy exceeds pixel limit")
         return self
 
     @property
     def competition_native_source_policy_sha256(self) -> Sha256Digest:
-        return canonical_sha256(self, domain=_POLICY_DOMAIN)
+        return canonical_sha256(self, domain=hash_domain(self.policy_version))
 
 
 class SourceRequestOutcome(CanonicalModel):
@@ -539,7 +551,7 @@ def _fresh_solve_result(
 class SourcePlan(CanonicalModel):
     """The single current, fully replayable source campaign plan."""
 
-    plan_version: Literal[_SOURCE_PLAN_VERSION] = _SOURCE_PLAN_VERSION
+    plan_version: Literal[_SOURCE_PLAN_VERSION, PERSISTENT_PLAN] = _SOURCE_PLAN_VERSION
     evidence_eligible: Literal[False] = False
     source_policy: SourcePolicy
     source_policy_sha256: Sha256Digest
@@ -561,6 +573,9 @@ class SourcePlan(CanonicalModel):
     @model_validator(mode="after")
     def validate_plan(self) -> Self:
         policy = self.source_policy
+        if (policy.policy_version != policy_for_captures(self.source_captures)
+                or self.plan_version != plan_for_policy(policy.policy_version)):
+            raise ValueError("native runtime/policy/plan version mismatch")
         if self.source_policy_sha256 != policy.competition_native_source_policy_sha256:
             raise ValueError("native source plan policy digest mismatch")
         if (
@@ -807,6 +822,7 @@ class SourcePlan(CanonicalModel):
             ):
                 raise ValueError("planned patch-bound evidence lineage changed")
             endpoint = EndpointPlan(
+                plan_version=endpoint_for_guard(guard_for_policy(self.source_policy.policy_version)),
                 planning_workspace=outcome.planning_workspace,
                 endpoint_workspace=outcome.endpoint_workspace,
                 candidate_index=outcome.endpoint_candidate_index,
@@ -877,6 +893,8 @@ class SourcePlan(CanonicalModel):
                 fresh_result.selected_witness.edit,
                 semantic_problem_sha256=proxy.semantic_problem.semantic_problem_sha256,
                 solve_result_sha256=fresh_result.solve_result_sha256,
+                proxy_binding=proxy.binding,
+                guard_version=guard_for_policy(self.source_policy.policy_version),
             )
             if replayed_guard != outcome.source_view_guard:
                 raise ValueError("planned source-view guard replay changed")
@@ -978,7 +996,7 @@ class SourcePlan(CanonicalModel):
 
     @property
     def competition_native_source_plan_sha256(self) -> Sha256Digest:
-        return canonical_sha256(self, domain=_PLAN_DOMAIN)
+        return canonical_sha256(self, domain=hash_domain(self.plan_version))
 
 
 _SOURCE_PLAN_CAPABILITY = object()

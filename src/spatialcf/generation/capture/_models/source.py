@@ -53,6 +53,8 @@ from spatialcf.generation.capture._models.constants import (
     _SOURCE_VIEW_BINDING_HASH_DOMAIN,
     _SOURCE_VIEW_FACT_HASH_DOMAIN,
     _SOURCE_VIEW_SAMPLING_POLICY_SHA256,
+    _SOURCE_VIEW_FINE_FACT_VERSION,
+    _source_view_policy,
 )
 
 from spatialcf.generation.capture._models.contracts import (
@@ -145,7 +147,7 @@ class SourceViewObjectSamples(CanonicalModel):
 
 
 class SourceViewFact(CanonicalModel):
-    fact_version: Literal["competition-native-source-view-fact:2.9.5"]
+    fact_version: Literal["competition-native-source-view-fact:2.9.5", _SOURCE_VIEW_FINE_FACT_VERSION]
     source_id: CanonicalId
     scene_id: CanonicalId
     source_locator_sha256: Sha256Digest
@@ -166,13 +168,14 @@ class SourceViewFact(CanonicalModel):
             raise ValueError("source-view object rows must be canonical")
         if sum(len(item.sample_rows) for item in self.objects) > 76_800:
             raise ValueError("source-view fact exceeds the sample cap")
-        if self.sampling_policy_sha256 != _SOURCE_VIEW_SAMPLING_POLICY_SHA256:
+        _, sampling_policy, fact_domain = _source_view_policy(self.fact_version)
+        if self.sampling_policy_sha256 != sampling_policy:
             raise ValueError("source-view sampling policy changed")
         payload = self.model_dump(
             mode="python", exclude={"source_view_fact_sha256"}
         )
         expected = canonical_sha256(
-            payload, domain=_SOURCE_VIEW_FACT_HASH_DOMAIN
+            payload, domain=fact_domain
         )
         if self.source_view_fact_sha256 != expected:
             raise ValueError("source-view fact digest mismatch")
@@ -530,6 +533,10 @@ class CompetitionNativeSourceCaptureV2_9(CanonicalModel):
             raise ValueError("captured reachable positions are not canonical")
         if self.source_view_fact is not None:
             fact = self.source_view_fact
+            if (fact.fact_version == _SOURCE_VIEW_FINE_FACT_VERSION
+                    and self.runtime_identity.coordinate_transform_version !=
+                    "ai2thor-native-xzy-to-rh-z-up-world-aabb-grid-v2"):
+                raise ValueError("fine source-view fact requires world-AABB geometry")
             camera = self.scene.camera_by_id("main")
             if (
                 fact.source_id != self.source.source_id

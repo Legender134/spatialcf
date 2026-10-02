@@ -5,6 +5,10 @@ from __future__ import annotations
 import hashlib
 
 import warnings
+from spatialcf.generation.planning.native_versions import (
+    PERSISTENT_POLICY, guard_for_policy, plan_for_policy, policy_for_captures,
+    LEGACY_CANDIDATES, CLEAR_FIRST_CANDIDATES,
+)
 
 from collections import (
     Counter,
@@ -108,7 +112,9 @@ from spatialcf.generation.planning.campaign_contracts import (
 )
 
 
-def build_default_source_policy(compilation: RosterCompilation) -> SourcePolicy:
+def build_default_source_policy(
+    compilation: RosterCompilation, *, candidate_strategy: str | None = None,
+) -> SourcePolicy:
     if type(compilation) is not RosterCompilation:
         raise TypeError("candidate roster compilation must be exact")
     with warnings.catch_warnings():
@@ -122,12 +128,17 @@ def build_default_source_policy(compilation: RosterCompilation) -> SourcePolicy:
             if item.status == "accepted" and item.capture is not None
         )
         return SourcePolicy(
+            policy_version=policy_for_captures(accepted_captures),
+            endpoint_candidate_strategy=(candidate_strategy if candidate_strategy is not None else
+                CLEAR_FIRST_CANDIDATES if policy_for_captures(accepted_captures) == PERSISTENT_POLICY
+                else LEGACY_CANDIDATES),
             campaign_id=checked.policy.campaign_id,
             roster_manifest_sha256=checked.request_manifest.manifest_sha256,
             width=checked.policy.width,
             height=checked.policy.height,
             seed=checked.policy.seed,
-            candidate_wall_time_seconds=60,
+            candidate_wall_time_seconds=(600 if policy_for_captures(accepted_captures) == PERSISTENT_POLICY else 60),
+            max_endpoint_candidate_points=(256 if policy_for_captures(accepted_captures) == PERSISTENT_POLICY else 64),
             solver_config=default_solver_config(),
             camera_policy=checked.policy.camera_policy,
             accepted_source_capture_roster_sha256=(
@@ -402,7 +413,11 @@ def _prepare_job(
 
 def _endpoint_worker(connection: Connection, arguments: tuple[object, ...]) -> None:
     try:
-        if len(arguments) != 12:
+        if len(arguments) not in (12, 13):
+            connection.send(("error", "InvalidWorkerArguments"))
+            return
+        strategy = arguments[12] if len(arguments) == 13 else LEGACY_CANDIDATES
+        if type(strategy) is not str or strategy not in (LEGACY_CANDIDATES, CLEAR_FIRST_CANDIDATES):
             connection.send(("error", "InvalidWorkerArguments"))
             return
         (
@@ -418,7 +433,7 @@ def _endpoint_worker(connection: Connection, arguments: tuple[object, ...]) -> N
             max_candidate_points,
             max_included_collision_obstacles,
             screening_domain_operations,
-        ) = arguments
+        ) = arguments[:12]
         try:
             result = plan_endpoint(
                 scene,
@@ -433,6 +448,7 @@ def _endpoint_worker(connection: Connection, arguments: tuple[object, ...]) -> N
                 max_candidate_points=max_candidate_points,
                 max_included_collision_obstacles=(max_included_collision_obstacles),
                 screening_domain_operations=screening_domain_operations,
+                **({"candidate_strategy": strategy} if strategy != LEGACY_CANDIDATES else {}),
             )
         except EndpointPlanRejected as error:
             connection.send(("rejected", error.reasons))
@@ -461,6 +477,8 @@ def _bounded_default_endpoint_plan(
         job.max_included_collision_obstacles,
         job.screening_domain_operations,
     )
+    if policy.endpoint_candidate_strategy != LEGACY_CANDIDATES:
+        arguments = (*arguments, policy.endpoint_candidate_strategy)
     context = get_context("spawn")
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(
@@ -539,6 +557,8 @@ def _run_job(
                 max_candidate_points=job.max_candidate_points,
                 max_included_collision_obstacles=(job.max_included_collision_obstacles),
                 screening_domain_operations=job.screening_domain_operations,
+                **({"candidate_strategy": policy.endpoint_candidate_strategy}
+                   if policy.endpoint_candidate_strategy != LEGACY_CANDIDATES else {}),
             )
         )
     except EndpointPlanRejected as error:
@@ -691,6 +711,8 @@ def _run_job(
         fresh_result.selected_witness.edit,
         semantic_problem_sha256=proxy.semantic_problem.semantic_problem_sha256,
         solve_result_sha256=fresh_result.solve_result_sha256,
+        proxy_binding=proxy.binding,
+        guard_version=guard_for_policy(policy.policy_version),
     )
     if replayed_guard != endpoint.source_view_guard:
         return _rejected_outcome(
@@ -888,6 +910,8 @@ def plan_source_campaign(
             if item.status == "accepted" and item.capture is not None
         )
         captures = {item.source.source_id: item for item in source_captures}
+        if policy.policy_version != policy_for_captures(source_captures):
+            raise ValueError("native runtime/policy version mismatch")
         if not selected_source_ids.issubset(captures):
             raise ValueError("selected request has no accepted frozen capture")
         if policy.accepted_source_capture_roster_sha256 != (
@@ -976,6 +1000,7 @@ def plan_source_campaign(
                 )
             )
         return SourcePlan(
+            plan_version=plan_for_policy(policy.policy_version),
             source_policy=policy,
             source_policy_sha256=policy.competition_native_source_policy_sha256,
             roster_manifest=manifest,
