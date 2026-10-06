@@ -24,6 +24,7 @@ from spatialcf.core._internal.kernels.convex_translation import (
     _directed_world_corner_boxes,
 )
 from spatialcf.core._internal.kernels.projected_visibility import (
+    _bound_partially_clipped_projection_v2_9,
     projected_bounding_box_area_fraction_lower_bound_v2_9,
 )
 from spatialcf.core._internal.kernels.so2 import (
@@ -903,6 +904,44 @@ def _classify_object(
         and min_v >= top
         and max_v <= bottom
     )
+    # The retained analytic area formula also freezes accounting for ambiguous
+    # cells. Extend only the separately registered bounding-box formula; area
+    # queries must still execute their original center projection and charge.
+    if (
+        not fully_contained
+        and image_area_formula
+        is VisibilityMetricFormula.VISIBLE_CLIPPED_PROJECTED_BOUNDING_BOX_AREA_OVER_IMAGE_AREA
+    ):
+        if z_lower < camera.near_clip_m or z_upper > camera.far_clip_m:
+            return _ambiguous_classification()
+        bounds = _bound_partially_clipped_projection_v2_9(
+            projected_u=tuple(projected_u),
+            projected_v=tuple(projected_v),
+            image_width_px=camera.width_px,
+            image_height_px=camera.height_px,
+            atomic_budget=budget,
+        )
+        if bounds is None:
+            return _ambiguous_classification()
+        area_lower = bounds.bounding_box_area_fraction_lower
+        metrics = _MetricValuesV2_9(
+            visible_fraction=(Fraction(1), Fraction(1)),
+            image_area_fraction=(area_lower, Fraction(1)),
+            truncated_fraction=(
+                bounds.truncated_fraction_lower,
+                bounds.truncated_fraction_upper,
+            ),
+        )
+        if (
+            metrics.visible_fraction[0]
+            >= Fraction.from_float(constraint.minimum_visible_fraction)
+            and metrics.image_area_fraction[0]
+            >= Fraction.from_float(constraint.minimum_image_area_fraction)
+            and metrics.truncated_fraction[1]
+            <= Fraction.from_float(constraint.maximum_truncated_fraction)
+        ):
+            return _ObjectClassificationV2_9(_ProjectionClassV2_9.PASS, metrics)
+        return _ambiguous_classification()
     center = bound_world_point_in_upright_camera(
         camera,
         world_xyz=(geometry.box.center_x, geometry.box.center_y, geometry.box.center_z),

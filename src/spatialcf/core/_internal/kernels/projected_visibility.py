@@ -8,6 +8,11 @@ from fractions import Fraction
 
 from spatialcf.core._internal.kernels import so2 as so2_interval
 from spatialcf.core._internal.kernels import upright_box as upright_box_interval
+from spatialcf.core._internal.kernels.convex_translation import (
+    RationalPoint2V2,
+    _canonical_convex_hull_v2,
+    _clip_vertices_by_half_plane,
+)
 from spatialcf.core._internal.kernels.so2 import (
     CardinalKernelKindV3,
     SO2AtomicBudgetExhaustedV2,
@@ -1017,6 +1022,175 @@ def _require_intervals(value: object, label: str) -> None:
             raise TypeError(f"{label} entries must be exact Fraction intervals")
         if item[0] > item[1]:
             raise ValueError(f"{label} interval endpoints are reversed")
+
+
+@dataclass(frozen=True, slots=True)
+class _ClippedProjectionBoundsV2_9:
+    silhouette_area_fraction_lower: Fraction
+    bounding_box_area_fraction_lower: Fraction
+    truncated_fraction_lower: Fraction
+    truncated_fraction_upper: Fraction
+
+
+def _bound_partially_clipped_projection_v2_9(
+    *,
+    projected_u: tuple[tuple[Fraction, Fraction], ...],
+    projected_v: tuple[tuple[Fraction, Fraction], ...],
+    image_width_px: int,
+    image_height_px: int,
+    atomic_budget: SO2AtomicBudgetV2,
+) -> _ClippedProjectionBoundsV2_9 | None:
+    """Bracket all hulls of eight matched positive-depth corner identities.
+
+    For nominal corner midpoints q_i and their largest coordinate half-width
+    delta, let N=conv(q_i), I=N eroded by delta B_inf, and O be the hull of
+    all corner interval rectangles. Each realized hull H satisfies I <= H
+    <= O: h_H(n) >= h_N(n)-delta*||n||_1, and each vertex lies in O.
+    Intersecting I and O with the closed pixel-center frame therefore gives
+    conservative area and truncation bounds for every realization. The
+    caller must establish the complete near/far and no-occluder preconditions.
+    """
+    _require_intervals(projected_u, "projected_u")
+    _require_intervals(projected_v, "projected_v")
+    if len(projected_u) != 8 or len(projected_v) != 8:
+        raise ValueError("partial projection needs eight matched corner identities")
+    if type(image_width_px) is not int or type(image_height_px) is not int:
+        raise TypeError("image dimensions must be exact integers")
+    if type(atomic_budget) is not SO2AtomicBudgetV2:
+        raise TypeError("atomic budget must be an exact SO2AtomicBudgetV2")
+    atomic_budget.validate()
+    if image_width_px <= 1 or image_height_px <= 1:
+        return None
+    nominal_points = []
+    outer_points = []
+    delta = Fraction()
+    for u, v in zip(projected_u, projected_v, strict=True):
+        atomic_budget.consume(4)
+        for value in (*u, *v):
+            _partial_projection_numeric_v2_9(value)
+        # Perspective interval endpoints may have large unrelated denominators.
+        # Expand them onto an exact 2^-128 grid before polygon intersections;
+        # integer floor/ceil preserves inclusion without relaxing the bit cap.
+        atomic_budget.consume(12)
+        u = _partial_projection_compact_enclosure_v2_9(u)
+        v = _partial_projection_compact_enclosure_v2_9(v)
+        midpoint_u = _partial_projection_numeric_v2_9((u[0] + u[1]) / 2)
+        midpoint_v = _partial_projection_numeric_v2_9((v[0] + v[1]) / 2)
+        delta = max(delta, (u[1] - u[0]) / 2, (v[1] - v[0]) / 2)
+        _partial_projection_numeric_v2_9(delta)
+        nominal_points.append(RationalPoint2V2(midpoint_u, midpoint_v))
+        outer_points.extend(RationalPoint2V2(x, y) for x in u for y in v)
+    nominal = _canonical_convex_hull_v2(tuple(nominal_points), atomic_budget)
+    outer = _canonical_convex_hull_v2(tuple(outer_points), atomic_budget)
+    if nominal is None or outer is None:
+        return None
+    inner_vertices = nominal.vertices_ccw
+    for start, end in zip(
+        nominal.vertices_ccw,
+        (*nominal.vertices_ccw[1:], nominal.vertices_ccw[0]),
+        strict=True,
+    ):
+        atomic_budget.consume(4)
+        nx = _partial_projection_numeric_v2_9(end.y - start.y)
+        ny = _partial_projection_numeric_v2_9(start.x - end.x)
+        offset = _partial_projection_numeric_v2_9(
+            nx * start.x + ny * start.y - delta * (abs(nx) + abs(ny))
+        )
+        inner_vertices = _clip_vertices_by_half_plane(
+            inner_vertices, nx, ny, offset, atomic_budget
+        )
+        if inner_vertices is None:
+            return None
+    frame = (
+        (Fraction(-1), Fraction(), Fraction(-1, 2)),
+        (Fraction(1), Fraction(), Fraction(image_width_px) - Fraction(1, 2)),
+        (Fraction(), Fraction(-1), Fraction(-1, 2)),
+        (Fraction(), Fraction(1), Fraction(image_height_px) - Fraction(1, 2)),
+    )
+
+    def clipped(vertices):
+        for nx, ny, offset in frame:
+            vertices = _clip_vertices_by_half_plane(
+                vertices, nx, ny, offset, atomic_budget
+            )
+            if vertices is None:
+                return None
+        return vertices
+
+    inner_area = _partial_projection_area_v2_9(inner_vertices, atomic_budget)
+    outer_area = _partial_projection_area_v2_9(outer.vertices_ccw, atomic_budget)
+    if inner_area <= 0 or outer_area <= 0:
+        return None
+    clipped_inner = clipped(inner_vertices)
+    clipped_outer = clipped(outer.vertices_ccw)
+    inner_frame_area = _partial_projection_area_v2_9(clipped_inner, atomic_budget)
+    outer_frame_area = _partial_projection_area_v2_9(clipped_outer, atomic_budget)
+    # A positive clipped area is required to define visible/clipped as one.
+    # Zero caller image thresholds do not remove this geometric precondition.
+    if inner_frame_area <= 0:
+        return None
+    atomic_budget.consume(4 * len(clipped_inner) + 3)
+    xs = tuple(point.x for point in clipped_inner)
+    ys = tuple(point.y for point in clipped_inner)
+    bbox_area = _partial_projection_numeric_v2_9(
+        (max(xs) - min(xs)) * (max(ys) - min(ys))
+    )
+    image_area = Fraction(image_width_px * image_height_px)
+    atomic_budget.consume(8)
+    return _ClippedProjectionBoundsV2_9(
+        silhouette_area_fraction_lower=_partial_projection_numeric_v2_9(
+            inner_frame_area / image_area
+        ),
+        bounding_box_area_fraction_lower=_partial_projection_numeric_v2_9(
+            bbox_area / image_area
+        ),
+        truncated_fraction_lower=_partial_projection_numeric_v2_9(
+            (inner_area - inner_frame_area) / outer_area
+        ),
+        truncated_fraction_upper=min(
+            Fraction(1),
+            _partial_projection_numeric_v2_9(
+                (outer_area - outer_frame_area) / inner_area
+            ),
+        ),
+    )
+
+
+def _partial_projection_compact_enclosure_v2_9(interval: _Interval) -> _Interval:
+    # Preserve small exact rationals so an exactly closed threshold remains
+    # provable; only dense directed-perspective endpoints need expansion.
+    if all(
+        max(value.numerator.bit_length(), value.denominator.bit_length()) <= 128
+        for value in interval
+    ):
+        return interval
+    scale = 1 << 128
+    lower, upper = interval
+    floor = (lower.numerator * scale) // lower.denominator
+    ceil = -((-upper.numerator * scale) // upper.denominator)
+    return (
+        _partial_projection_numeric_v2_9(Fraction(floor, scale)),
+        _partial_projection_numeric_v2_9(Fraction(ceil, scale)),
+    )
+
+
+def _partial_projection_area_v2_9(vertices, budget: SO2AtomicBudgetV2) -> Fraction:
+    if vertices is None:
+        return Fraction()
+    total = Fraction()
+    for start, end in zip(vertices, (*vertices[1:], vertices[0]), strict=True):
+        budget.consume(4)
+        term = _partial_projection_numeric_v2_9(start.x * end.y - start.y * end.x)
+        total = _partial_projection_numeric_v2_9(total + term)
+    budget.consume()
+    return _partial_projection_numeric_v2_9(total / 2)
+
+
+def _partial_projection_numeric_v2_9(value: Fraction) -> Fraction:
+    so2_interval._require_numeric_fraction_cap(
+        value, "NUMERIC_GAP:PARTIAL_PROJECTION_FRACTION_BIT_CAP"
+    )
+    return value
 
 
 __all__ = (

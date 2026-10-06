@@ -161,6 +161,68 @@ def _ray_hits_prepared_obb_before(endpoint: np.ndarray, prepared: _PreparedRayOb
     return lower <= upper and lower <= 1.0
 
 
+def _axis_aligned_frames(origin, obbs):
+    """Prepare only the exact identity-rotation case; retain the scalar fallback."""
+    if np.geterr() != {
+        "divide": "warn", "over": "warn", "under": "ignore", "invalid": "warn",
+    }:
+        return None
+    # Avoid eager arithmetic that the lazy scalar path might never reach.
+    limit = np.finfo(np.float64).max / 8
+    values = (
+        *origin,
+        *(value for obb in obbs.values() for value in (
+            obb.center.x, obb.center.y, obb.center.z,
+            obb.extent.x, obb.extent.y, obb.extent.z,
+        )),
+    )
+    if any(not math.isfinite(value) or abs(value) > limit for value in values):
+        return None
+    identity = np.eye(3, dtype=np.float64)
+    if any(not np.array_equal(_rotation(obb), identity) for obb in obbs.values()):
+        return None
+    frames = tuple(_prepare_ray_obb(origin, obb) for obb in obbs.values())
+    local_origins = np.asarray([frame.local_origin for frame in frames])
+    halves = np.asarray([frame.half for frame in frames])
+    if not np.all(np.isfinite(local_origins)) or not np.all(np.isfinite(halves)):
+        return None
+    return local_origins, halves
+
+
+def _axis_aligned_rays_blocked(origin, corners, frames, excluded_index):
+    """The original three-axis closed slab test, broadcast over rays and boxes.
+
+    No geometric pruning or new tolerance is used. Nonfinite directions use
+    the original evaluator, including its matrix multiplication behavior.
+    """
+    with np.errstate(over="ignore", invalid="ignore"):
+        directions = np.asarray(corners) - origin
+    if not np.all(np.isfinite(directions)):
+        return None
+    local_origins, halves = frames
+    shape = (len(corners), len(local_origins))
+    lower = np.zeros(shape, dtype=np.float64)
+    upper = np.ones(shape, dtype=np.float64)
+    alive = np.ones(shape, dtype=bool)
+    alive[:, excluded_index] = False
+    for axis in range(3):
+        direction = directions[:, axis, None]
+        local_origin = local_origins[None, :, axis]
+        half = halves[None, :, axis]
+        parallel = direction == 0.0
+        alive &= ~(parallel & ((local_origin < -half) | (local_origin > half)))
+        # Parallel lanes do not update intervals, just as in the scalar test.
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            first = (-half - local_origin) / direction
+            second = (half - local_origin) / direction
+        if np.any(~parallel & (~np.isfinite(first) | ~np.isfinite(second))):
+            return None  # preserve the original lazy warning/exception order
+        lower = np.where(parallel, lower, np.maximum(lower, np.minimum(first, second)))
+        upper = np.where(parallel, upper, np.minimum(upper, np.maximum(first, second)))
+        alive &= lower <= upper
+    return bool(np.any(alive & (lower <= 1.0)))
+
+
 def _outer_projection(camera, matrix: np.ndarray, obb: OBB) -> tuple[float, float]:
     pixels = tuple(_pixel(camera, _camera_point(matrix, corner)) for corner in _obb_corners(obb))
     xs = tuple(item[0] for item in pixels)
@@ -515,6 +577,10 @@ def _evaluate_sampled_guard(
         for item in scene.objects
     }
     prepared_obbs: dict[str, _PreparedRayObb] = {}
+    # All scene boxes were validated above. Identity rotation admits an exact
+    # broadcast of the same slab arithmetic; arbitrary OBBs keep the old path.
+    aligned_frames = _axis_aligned_frames(camera_origin, obbs)
+    object_indices = {object_id: index for index, object_id in enumerate(obbs)}
 
     def ray_hits(corner: np.ndarray, blocker_id: str, blocker: OBB) -> bool:
         prepared = prepared_obbs.get(blocker_id)
@@ -563,12 +629,19 @@ def _evaluate_sampled_guard(
                 reasons.append("projection:sample_out_of_frame")
                 continue
             try:
-                blocked = any(
-                    ray_hits(corner, blocker_id, blocker)
-                    for corner in corners
-                    for blocker_id, blocker in obbs.items()
-                    if blocker_id != row.object_id
+                blocked = (
+                    _axis_aligned_rays_blocked(
+                        camera_origin, corners, aligned_frames, object_indices[row.object_id]
+                    )
+                    if aligned_frames is not None else None
                 )
+                if blocked is None:
+                    blocked = any(
+                        ray_hits(corner, blocker_id, blocker)
+                        for corner in corners
+                        for blocker_id, blocker in obbs.items()
+                        if blocker_id != row.object_id
+                    )
             except ValueError:
                 reasons.append("coverage:blocker_invalid")
                 continue

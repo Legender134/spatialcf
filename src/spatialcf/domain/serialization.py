@@ -26,6 +26,16 @@ _CANONICAL_ID_ADAPTER = TypeAdapter(CanonicalId)
 
 
 def _canonical_json_value_v2(value: Any) -> Any:
+    # Captured raster facts contain large scalar arrays. Exact built-in scalar
+    # types need no model/Enum/ABC dispatch; subclasses still take the original
+    # path below so their validation and Enum-value semantics remain intact.
+    kind = type(value)
+    if kind is int or kind is str or kind is bool or value is None:
+        return value
+    if kind is float:
+        if not math.isfinite(value):
+            raise ValueError("canonical JSON numbers must be finite")
+        return 0.0 if value == 0.0 else value
     if isinstance(value, CanonicalModel):
         validated = type(value).model_validate(value, strict=True)
         return _canonical_json_value_v2(
