@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 from spatialcf.adapters.base import (
     AdapterActionRejected,
     AdapterObservation,
+    AdapterObservation as AI2ThorObservation,
     AdapterOperationError,
     AdapterPose,
     AdapterPosition,
@@ -23,17 +24,14 @@ from spatialcf.adapters.base import (
     CaptureRequest,
     CertifiedEditApplication,
     EnvironmentAdapter,
+    EnvironmentAdapter as AI2ThorAdapter,
     SettledReadback,
     SourceCaptureFacts,
     SourceCaptureOptions,
     capture_bound_adapter_spawn_map,
 )
-from spatialcf.adapters.base import AdapterObservation as AI2ThorObservation
-from spatialcf.adapters.base import EnvironmentAdapter as AI2ThorAdapter
 from spatialcf.core.solver import solve_minimum_cost
-from spatialcf.core.verification import (
-    verify_solve_result,
-)
+from spatialcf.core.verification import verify_solve_result
 from spatialcf.domain.base import (
     CanonicalId,
     CanonicalModel,
@@ -44,7 +42,7 @@ from spatialcf.domain.base import (
 )
 from spatialcf.domain.edit import CanonicalEdit
 from spatialcf.domain.request import InterventionSpec, QualityTier, SolverStatus
-from spatialcf.domain.scene import OBB, Camera, Scene
+from spatialcf.domain.scene import Camera, Scene
 from spatialcf.domain.serialization import canonical_sha256
 from spatialcf.domain.solver import (
     ContinuousYawCertifiedSuccessResultV2_9,
@@ -57,6 +55,7 @@ from spatialcf.generation.capture.compiler import (
 from spatialcf.generation.capture.models import (
     _SUBJECT_EVIDENCE_HASH_DOMAIN,
     CameraPolicy,
+    CompetitionNativeCameraPoseV2_9_3 as CameraPose,
     CompetitionNativeRuntimeIdentityV2_9,
     CompetitionNativeSourceCaptureV2_9,
     SourceCameraEvidence,
@@ -67,9 +66,6 @@ from spatialcf.generation.capture.models import (
     build_competition_native_settled_camera_policy_v2_9_10,
     verify_competition_native_camera_observation_binding_v2_9_3,
     verify_source_surface_evidence,
-)
-from spatialcf.generation.capture.models import (
-    CompetitionNativeCameraPoseV2_9_3 as CameraPose,
 )
 from spatialcf.generation.execution.correspondence import (
     CaptureSourceCorrespondence,
@@ -95,7 +91,6 @@ from spatialcf.verification.verifier import VerificationResult, Verifier
 _AUDIT_HASH_DOMAIN = "spatialcf.competition-native-endpoint-audit.v2.9.6"
 _MAX_POSITION_RESIDUAL_M = 1e-5
 _MAX_RUNTIME_POSITION_RESIDUAL_M = 1e-4
-_OBJECT_GEOMETRY_TOLERANCE_M = 1e-5
 _CAMERA_INTRINSIC_TOLERANCE = 1e-8
 _CAMERA_EXTRINSIC_TOLERANCE = 1e-5
 _RUN_HASH_DOMAIN = "spatialcf.competition-native-audit-run.v2.9.7"
@@ -813,135 +808,6 @@ def _require_native_after_structure(
             raise _NativeAfterStructureMismatch(
                 f"camera facts changed: {original.camera_id}"
             )
-
-
-def _vec3_values(value) -> tuple[float, float, float]:
-    return value.x, value.y, value.z
-
-
-def _quaternion_angle_residual_deg(left, right, label: str) -> float:
-    a = tuple(float(item) for item in (left.x, left.y, left.z, left.w))
-    b = tuple(float(item) for item in (right.x, right.y, right.z, right.w))
-    if not all(math.isfinite(item) for item in (*a, *b)):
-        raise ValueError(f"{label} must contain finite values")
-    a_norm = math.sqrt(sum(item * item for item in a))
-    b_norm = math.sqrt(sum(item * item for item in b))
-    if a_norm == 0.0 or b_norm == 0.0:
-        raise ValueError(f"{label} must contain non-zero quaternions")
-    cosine = abs(
-        sum(
-            (a_item / a_norm) * (b_item / b_norm)
-            for a_item, b_item in zip(a, b, strict=True)
-        )
-    )
-    return math.degrees(2.0 * math.acos(min(1.0, max(-1.0, cosine))))
-
-
-def _obb_corner_coordinates(obb: OBB, label: str) -> tuple[tuple[float, ...], ...]:
-    values = (
-        obb.center.x,
-        obb.center.y,
-        obb.center.z,
-        obb.extent.x,
-        obb.extent.y,
-        obb.extent.z,
-        obb.rotation.x,
-        obb.rotation.y,
-        obb.rotation.z,
-        obb.rotation.w,
-    )
-    if not all(math.isfinite(float(item)) for item in values):
-        raise ValueError(f"{label} must contain finite values")
-    if any(float(item) <= 0.0 for item in (obb.extent.x, obb.extent.y, obb.extent.z)):
-        raise ValueError(f"{label} must contain strictly positive extents")
-    x, y, z, w = (
-        float(obb.rotation.x),
-        float(obb.rotation.y),
-        float(obb.rotation.z),
-        float(obb.rotation.w),
-    )
-    maximum_component = max(abs(x), abs(y), abs(z), abs(w))
-    if maximum_component == 0.0:
-        raise ValueError(f"{label} must contain a non-zero quaternion")
-    scaled = tuple(component / maximum_component for component in (x, y, z, w))
-    scaled_norm = math.sqrt(sum(component * component for component in scaled))
-    if not math.isfinite(scaled_norm) or scaled_norm == 0.0:
-        raise ValueError(f"{label} must contain a normalizable quaternion")
-    x, y, z, w = (component / scaled_norm for component in scaled)
-    rotation = (
-        (1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)),
-        (2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)),
-        (2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)),
-    )
-    center = (float(obb.center.x), float(obb.center.y), float(obb.center.z))
-    half_extent = (
-        float(obb.extent.x) / 2.0,
-        float(obb.extent.y) / 2.0,
-        float(obb.extent.z) / 2.0,
-    )
-    return tuple(
-        tuple(
-            center[row]
-            + sum(
-                rotation[row][column] * signs[column] * half_extent[column]
-                for column in range(3)
-            )
-            for row in range(3)
-        )
-        for signs in (
-            (dx, dy, dz)
-            for dx in (-1.0, 1.0)
-            for dy in (-1.0, 1.0)
-            for dz in (-1.0, 1.0)
-        )
-    )
-
-
-def _obb_corner_hausdorff_residual_m(left: OBB, right: OBB, label: str) -> float:
-    left_corners = _obb_corner_coordinates(left, label)
-    right_corners = _obb_corner_coordinates(right, label)
-
-    def directed(source, target) -> float:
-        return max(
-            min(math.dist(source_corner, target_corner) for target_corner in target)
-            for source_corner in source
-        )
-
-    return max(
-        directed(left_corners, right_corners),
-        directed(right_corners, left_corners),
-    )
-
-
-def _close_values(left, right, tolerance: float) -> bool:
-    return len(left) == len(right) and all(
-        math.isfinite(float(a))
-        and math.isfinite(float(b))
-        and math.isclose(float(a), float(b), rel_tol=0.0, abs_tol=tolerance)
-        for a, b in zip(left, right, strict=True)
-    )
-
-
-def _quaternions_close(left, right) -> bool:
-    a = tuple(float(item) for item in (left.x, left.y, left.z, left.w))
-    b = tuple(float(item) for item in (right.x, right.y, right.z, right.w))
-    if not all(math.isfinite(item) for item in (*a, *b)):
-        return False
-    a_norm = math.sqrt(sum(item * item for item in a))
-    b_norm = math.sqrt(sum(item * item for item in b))
-    if a_norm == 0.0 or b_norm == 0.0:
-        return False
-    normalized_a = tuple(item / a_norm for item in a)
-    normalized_b = tuple(item / b_norm for item in b)
-    return _close_values(
-        normalized_a,
-        normalized_b,
-        _OBJECT_GEOMETRY_TOLERANCE_M,
-    ) or _close_values(
-        normalized_a,
-        tuple(-item for item in normalized_b),
-        _OBJECT_GEOMETRY_TOLERANCE_M,
-    )
 
 
 class AuditRun(CanonicalModel):
@@ -2067,4 +1933,15 @@ __all__ = (
     "execute_endpoint",
     "observation_sha256",
     "verify_audit_run",
+)
+
+# Supported historical imports resolve to the actual implementation objects.
+from spatialcf.generation._internal.audit_geometry import (
+    _OBJECT_GEOMETRY_TOLERANCE_M as _OBJECT_GEOMETRY_TOLERANCE_M,
+    _close_values as _close_values,
+    _obb_corner_coordinates as _obb_corner_coordinates,
+    _obb_corner_hausdorff_residual_m as _obb_corner_hausdorff_residual_m,
+    _quaternion_angle_residual_deg as _quaternion_angle_residual_deg,
+    _quaternions_close as _quaternions_close,
+    _vec3_values as _vec3_values,
 )

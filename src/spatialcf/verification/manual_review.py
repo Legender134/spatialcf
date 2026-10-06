@@ -18,7 +18,7 @@ from pydantic import (
 )
 
 from spatialcf.domain.request import QualityTier, Relation
-from spatialcf.verification.dataset import _read_dataset
+from spatialcf.verification.dataset_reader import _read_dataset
 
 _QUEUE_SCHEMA_VERSION = 3
 _IMMUTABLE_FIELDS = (
